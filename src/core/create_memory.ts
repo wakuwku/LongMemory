@@ -43,6 +43,7 @@ import { detect_language, type language_code } from './i18n/language_detection.j
 import { deterministic_multilingual_embeddings, type multilingual_embedding_provider } from './i18n/multilingual_embeddings.js';
 import { sha256_hex } from './hash/content_hash.js';
 import type { embedding_context } from './embeddings/types.js';
+import { CentralMemoryService } from './central_memory/service.js';
 
 export type memory_store_kind = 'memory' | 'sqlite';
 export type recall_mode = 'strict' | 'historical' | 'associative' | 'world_grounded';
@@ -172,6 +173,7 @@ export interface long_memory {
     applyImportPlan(plan: HydrographImportPlan): Promise<hydrograph_import_result>;
     runDecay(params?: decay_cycle_params): Promise<decay_cycle_result>;
     reinforce(id: string, params?: reinforcement_params): Promise<HydroNode>;
+    centralMemory(): CentralMemoryService | null;
     close(): Promise<void>;
     status(): { name: 'longmemory-hydrograph'; phase: 'phase-19-public-api'; ready: boolean; store: memory_store_kind };
     invariants(): readonly string[];
@@ -257,6 +259,9 @@ export function create_memory(config: memory_config = {}): long_memory {
             startup_integrity_check: true,
         });
     }
+    const central_memory = store
+        ? new CentralMemoryService(store.central_memory, { readonly: config.readonly === true })
+        : null;
 
     const recovered_nodes = store?.load_nodes() ?? [];
     const recovered_edges = store?.load_edges() ?? [];
@@ -805,6 +810,7 @@ export function create_memory(config: memory_config = {}): long_memory {
             });
             return engine.graph.get_node(id) as HydroNode;
         },
+        centralMemory: () => central_memory,
         async close() {
             if (closed) return;
             if (store && config.readonly !== true) store.save_sketch_state('global', engine.sketches);

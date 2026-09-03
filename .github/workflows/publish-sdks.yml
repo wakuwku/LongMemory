@@ -41,6 +41,7 @@ jobs:
 
     npm:
         needs: validate
+        if: github.repository == 'CaviraOSS/LongMemory'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -60,6 +61,7 @@ jobs:
 
     n8n:
         needs: validate
+        if: github.repository == 'CaviraOSS/LongMemory'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -79,6 +81,7 @@ jobs:
 
     vscode:
         needs: validate
+        if: github.repository == 'CaviraOSS/LongMemory'
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4

@@ -1,0 +1,75 @@
+{
+    "description": "Load, refresh, and safely extract governed local central memory for Codex tasks.",
+    "hooks": {
+        "SessionStart": [
+            {
+                "matcher": "startup|resume|clear|compact",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "timeout": 20,
+                        "statusMessage": "Loading central memory",
+                        "additionalContextLimit": 1800
+                    }
+                ]
+            }
+        ],
+        "UserPromptSubmit": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "timeout": 20,
+                        "statusMessage": "Recalling relevant central memory",
+                        "additionalContextLimit": 1800
+                    }
+                ]
+            }
+        ],
+        "PreCompact": [
+            {
+                "matcher": "manual|auto",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "timeout": 20,
+                        "statusMessage": "Saving central-memory delivery state"
+                    }
+                ]
+            }
+        ],
+        "PostCompact": [
+            {
+                "matcher": "manual|auto",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "timeout": 20,
+                        "statusMessage": "Refreshing central-memory versions"
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts','codex-memory-hook.mjs')).href)\"",
+                        "timeout": 20,
+                        "statusMessage": "Checking formal memory"
+                    }
+                ]
+            }
+        ]
+    }
+}

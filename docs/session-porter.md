@@ -53,7 +53,9 @@ as `2-6`.
 longmemory detect
 longmemory session discover --from claude-code
 longmemory port --from claude-code --to longmemory --all
-longmemory port --from codex --to longmemory --id <session-id> --agent builder
+longmemory history inventory --from codex --all
+longmemory history plan --from codex --all
+longmemory port --from codex --to longmemory --id <session-id> --history-manifest ./history-overrides.json --project <project-id> --db ./central-memory.db --agent builder
 longmemory verify --from opencode --sample 10
 longmemory session wiki --from gemini-cli --all --name "Project decisions"
 longmemory session wiki --from copilot-chat --id <session-id> --agent reviewer --status approved
@@ -61,14 +63,112 @@ longmemory session wiki --from copilot-chat --id <session-id> --agent reviewer -
 
 `port` accepts exactly one source harness and the `longmemory` destination. Use
 `--all` or repeat `--id`. `--force` creates a new asset version even when the
-source revision is unchanged.
+source revision is unchanged. Codex is intentionally stricter: interactive TUI
+transfer and `--all` are disabled, and every batch requires explicit history
+manifest, project, and persistent database authorization.
 
 Normal non-interactive output remains one JSON document. Use `--jsonl` to emit
 progress events followed by a summary record:
 
 ```powershell
-longmemory port --from codex --to longmemory --all --jsonl
+longmemory port --from codex --to longmemory --id <session-id> --history-manifest ./history-overrides.json --project <project-id> --db ./central-memory.db --jsonl
 ```
+
+## Codex history authorization
+
+Codex history often contains unrelated repositories and creative projects.
+`history inventory` freezes the complete source-path set and each JSONL file's
+last newline-committed byte prefix, then parses those exact prefixes without
+writing a database. `history plan` emits stable cwd candidates, parent/fork
+relationships, per-session safe content revisions, and
+`plan.override_manifest_template`. Copy that template to a JSON file, review
+the candidates, and set only approved cwd or session assignments to
+`confirmed: true`.
+
+The manifest's `inventory_id` covers the exact safe review snapshots. For a
+credential-affected session the content revision is computed from its
+deterministically derived snapshot, never from the credential-bearing source
+object. The inventory also includes a reconciliation digest accounting for
+every source file. Its
+`source_snapshot` also binds every reviewed path to an exact byte cutoff and
+SHA-256 prefix hash. At import time LongMemory reopens only that approved set.
+Records appended after a cutoff and files created after the inventory are left
+for the next inventory, while a changed or truncated approved prefix fails
+closed. Moving an unchanged task from active to archived Codex storage is
+accepted only when its basename and exact prefix hash still match. Legacy
+manifests without `source_snapshot` retain the older strict live-inventory
+check. Malformed/unreadable files and otherwise importable files with skipped
+malformed lines block the batch. Empty and explicitly excluded tasks remain
+explicit non-importable scan counts. Every requested `--id` must be a confirmed
+`assign` to the exact explicit `--project`; excluded, unresolved, unconfirmed,
+duplicate, and other-project IDs are rejected before opening `--db`. Other
+projects may remain unconfirmed, so reviewed projects can be imported in batches.
+The write phase reuses the same parsed objects that passed authorization and
+records `inventory_id`, `reconciliation_digest`, `plan_id`, `manifest_hash`,
+`source_revision`, target project, and target database in the governed asset
+metadata. It also creates immutable history-backfill runs in the explicitly
+authorized central database. Runs are split without dropping source text and
+are processed only by a task/turn capability scoped to that project.
+
+Because snapshots and chunks are immutable, authorization scans every selected
+snapshot for high-signal credential material before SQLite is opened. A match
+blocks the batch by default and adds an unconfirmed, versioned
+`redaction_policy` proposal to the review manifest. Only explicit human
+confirmation of the complete policy and each affected session permits an
+in-memory derived snapshot; the original source file is never changed.
+
+Every matched span, including marker-shaped source text, is replaced by a
+deterministic marker. The approved evidence binds the derived revision,
+detector and policy versions, structural locations, credential kinds, exact
+terminal marker IDs/count, and a secret-free transformation-manifest hash. It
+does not expose a hash of the credential-bearing source object. Immutable
+staging accepts marker-bearing content only with a live evidence object scoped
+from that exact issued authorization; copied, forged, stale, missing,
+duplicated, malformed, or extra markers fail closed. Reports contain only safe
+session references, counts, detector kinds, and structural locations. Tests
+verify that removed values never reach SQLite, errors, receipts, candidates, or
+the Obsidian projection.
+
+Extraction does not write formal memory directly. Workers first produce
+source-located findings, then perform bounded multi-round consolidation. Only
+the final consolidated receipt can enter the history-publication queue. A
+second worker boundary proposes the four-level hierarchy, creates an immutable
+CAS plan, and executes it. New roles/tasks, changed content, conflicts, and
+level-1 or major rules pause at their respective human-governance or central
+confirmation gates. Historical transcript text remains untrusted evidence and
+is never current authorization. Replaying the same candidate is idempotent;
+newer current-task memory cannot be overwritten by a stale historical plan.
+
+A project binding alone never creates worker authority. Before extraction, a
+human uses `history worker authorize` to grant the exact Codex session a run,
+plan, or explicit `--all-runs` scope. The same persisted authorization gates
+extraction, consolidation, and publication, and `history worker revoke`
+invalidates outstanding leases before they can submit.
+
+## Human publication governance
+
+Review pending items in the read-only Obsidian projection or through a
+separately configured approver interface. Submit the resulting human decision
+through the trusted local CLI:
+
+1. Accept or reject a hierarchy proposal with `history govern
+   <accept_hierarchy|reject_hierarchy>`, the publication ID, and its exact
+   `--proposal-id`.
+2. Let the publication worker create an immutable plan. If its relation is
+   `update` or `conflict`, approve the exact current `--plan-version` with
+   `approve_update` or `approve_conflict`.
+3. Let the capability-scoped worker execute a ready plan. If the result is
+   `pending_confirmation`, resolve the reported confirmation ID with `history
+   confirm <approve|reject|cancel>`.
+4. Use `retry` only after a failed publication is `retryable`. Use `discard` to
+   terminate a candidate that should not proceed.
+
+Every governance command requires an existing persistent `--db`, the exact
+`--project`, a unique `--action-id`, and an explicit bare `--confirm-human`
+flag. LongMemory derives the actor and evidence from the local CLI context and
+rejects cross-project targets or caller-supplied evidence. See the
+[CLI governance reference](cli.md#govern-codex-history-publication) for commands
+and selector requirements.
 
 ## AI Wiki conversion
 
@@ -126,8 +226,9 @@ stored raw turns.
 ## Idempotency and revisions
 
 The stable Chat Memory asset ID derives from `(source harness, native session
-ID)`. A content revision covers the title, project path, ordered turns, and drop
-count.
+ID)`. A content revision covers every portable field used by the importer:
+source path, title, cwd, timestamps, ordered turns, drop count, and source
+metadata.
 
 - First revision: `created`
 - Same revision: `skipped`

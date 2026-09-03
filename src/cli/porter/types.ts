@@ -45,6 +45,8 @@ export type session_ref = {
     title: string;
     cwd: string;
     updated_at?: number;
+    source_kind?: string;
+    excluded_reason?: string;
 };
 
 export type harness_capability = {
@@ -55,9 +57,28 @@ export type harness_capability = {
     note: string | null;
 };
 
+export type source_reconciliation_ref = {
+    source_session_id: string;
+    source_path: string;
+};
+
+export type source_reconciliation = {
+    source_files: number;
+    importable_tasks: number;
+    empty_tasks: number;
+    parse_failures: number;
+    excluded_tasks: number;
+    partial_tasks: number;
+    empty: source_reconciliation_ref[];
+    failures: Array<source_reconciliation_ref & { error: string }>;
+    excluded: Array<source_reconciliation_ref & { reason: string }>;
+    partial: Array<source_reconciliation_ref & { skipped_line_count: number }>;
+};
+
 export type import_adapter = {
     harness: harness_id;
     detect(env?: NodeJS.ProcessEnv): harness_capability | Promise<harness_capability>;
     discover(env?: NodeJS.ProcessEnv): session_ref[] | Promise<session_ref[]>;
     parse(ref: session_ref, env?: NodeJS.ProcessEnv): portable_session | Promise<portable_session>;
+    reconcile?(env?: NodeJS.ProcessEnv): source_reconciliation | Promise<source_reconciliation>;
 };

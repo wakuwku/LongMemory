@@ -17,3 +17,8 @@ export * from './sqlite_store.js';
 export * from './migrations.js';
 export * from './queries.js';
 export * from './integrity.js';
+export * from './central_memory_repository.js';
+export * from './history_backfill_migration.js';
+export * from './history_worker_authorization_migration.js';
+export * from './history_publication_migration.js';
+export * from './history_publication_hardening_migration.js';

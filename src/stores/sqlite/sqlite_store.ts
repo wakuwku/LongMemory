@@ -29,6 +29,7 @@ import type { MemoryStore, StoreKind, memory_maintenance_event } from '../index.
 import { check_sqlite_integrity, decode_node_safely, type IntegrityIssue, type IntegrityReport } from './integrity.js';
 import { apply_migrations } from './migrations.js';
 import { queries, type NodeQueryOptions, type StrictQueryOptions } from './queries.js';
+import { CentralMemoryRepository } from './central_memory_repository.js';
 
 export type SqliteStoreOptions = {
     tenant_id?: string;
@@ -54,6 +55,7 @@ export class SqliteStore implements MemoryStore {
     readonly tenant_id: string;
     readonly user_id: string;
     readonly database: Database.Database;
+    readonly central_memory: CentralMemoryRepository;
     readonly startup_integrity_report: IntegrityReport;
     private readonly now: () => number;
     private readonly runtime_issues: IntegrityIssue[] = [];
@@ -74,6 +76,11 @@ export class SqliteStore implements MemoryStore {
             this.database.pragma('synchronous = NORMAL');
             apply_migrations(this.database, this.now());
         }
+        this.central_memory = new CentralMemoryRepository(this.database, {
+            tenant_id: this.tenant_id,
+            user_id: this.user_id,
+            now: this.now,
+        });
         this.startup_integrity_report = options.startup_integrity_check === false
             ? { ok: true, checked_nodes: 0, checked_edges: 0, checked_sketches: 0, issues: [] }
             : this.check_integrity();

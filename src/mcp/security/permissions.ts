@@ -24,6 +24,7 @@ export type mcp_access = {
     team_ids: readonly string[];
     roles: readonly string[];
     agent_id: string | null;
+    central_thread_id: string | null;
     framework: string | null;
     read_only: boolean;
     allowed_tools: ReadonlySet<mcp_tool_name>;

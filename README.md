@@ -190,6 +190,8 @@ Strict recall applies temporal, contradiction, contract, confidence, and groundi
 - **Temporal reasoning** with point-in-time truth, event ordering, supersession, and stale-evidence controls.
 - **Multilingual memory** with script detection, code switching, transliteration, and cross-language embeddings.
 - **Project memory** for architecture, decisions, tasks, conventions, failures, handoffs, and code impact.
+- **Codex central memory** with four-level project/role/task/formal-memory scope, immutable versions, explicit confirmations, conflict governance, bounded per-task working sets, and governed L4-only links between otherwise isolated projects.
+- **Obsidian projection** that renders central SQLite truth as an atomic, read-only Markdown vault, including project-link audit records, history-publication governance queues, immutable plans/attempts, and a separate proposal inbox.
 - **Governed assets** for Chat Memory, Skills, LLM-Wiki, and CodeGraph with lifecycle and ACL policy.
 - **Session porter** for Claude Code, Codex, OpenCode, Gemini CLI, Copilot Chat, Cline, and raw harness logs.
 - **Connectors** for repositories, local files, Markdown, web content, feeds, cloud documents, and provider APIs.
@@ -226,7 +228,10 @@ Installable integrations include:
 - Dify and Flowise native MCP setup
 - CrewAI, AutoGen, LangGraph/LangChain, OpenAI Agents SDK, and PydanticAI examples
 
-See [integrations/README.md](integrations/README.md) and [docs/mcp.md](docs/mcp.md).
+The Codex plugin uses lifecycle hooks for bounded recall and turn finalization;
+SQLite remains the authority while each task receives only its relevant working
+set. See [the Codex integration guide](integrations/codex-longmemory/README.md),
+[integrations/README.md](integrations/README.md), and [docs/mcp.md](docs/mcp.md).
 
 ---
 
@@ -275,8 +280,16 @@ longmemory asset loadout "prepare the release" --agent reviewer --framework code
 longmemory code impact createMemory
 longmemory detect
 longmemory session discover --from claude-code
+longmemory history inventory --from codex --all
+longmemory history plan --from codex --all
+longmemory port --from codex --to longmemory --id <confirmed-session-id> --history-manifest ./history-overrides.json --project <confirmed-project-id> --db ./central-memory.db
+longmemory history govern accept_hierarchy <publication-id> --proposal-id <proposal-id> --db ./central-memory.db --project <confirmed-project-id> --action-id <action-id> --confirm-human
+longmemory history confirm approve <confirmation-id> --db ./central-memory.db --project <confirmed-project-id> --action-id <action-id> --confirm-human
+longmemory project link create novel ai-painting --two-way --db ./central-memory.db --project novel --action-id link-novel-art-001 --confirm-human
+longmemory project link list --db ./central-memory.db --project novel
 longmemory port --from claude-code --to longmemory --all
 longmemory session wiki --from gemini-cli --all --name "Project knowledge"
+longmemory obsidian project --db ./central-memory.db --vault ./KnowledgeVault
 longmemory serve --mcp-http
 ```
 
@@ -284,7 +297,7 @@ Finite commands emit stable JSON outside a TTY or when `--json` is supplied. The
 
 ---
 
-## 9. Dashboard and VS Code
+## 9. Management Surfaces
 
 The Next.js dashboard provides health, memory browsing, ingestion, search, project selection, activity, decay, settings, timelines, and memory-aware chat through a same-origin API proxy.
 
@@ -294,6 +307,33 @@ pnpm --dir dashboard start
 ```
 
 The VS Code extension provides an activity-bar browser, status bar, recall, project context, explanation, reinforcement, explicit decay, session import, and reviewed AI-change capture.
+
+For local knowledge governance, project the central-memory SQLite database into
+an Obsidian-compatible Markdown vault:
+
+```bash
+longmemory obsidian project \
+  --db ./central-memory.db \
+  --vault ./KnowledgeVault
+```
+
+The projection is deterministic and atomic. Generated pages are read-only
+views of SQLite; LongMemory refuses to overwrite externally edited generated
+files. Put human-authored changes under `LongMemory/Proposals/inbox/` for later
+review instead of editing generated pages directly. Obsidian itself is optional:
+the command can generate and refresh the Markdown vault before the desktop app
+is installed. The generated home page also separates pending hierarchy review,
+pending content review, and pending central confirmation. Historical candidates,
+hierarchy proposals, human decisions, immutable publication plans, and execution
+attempts each have auditable pages; none of those pages can approve or publish a
+memory by being edited.
+
+Projects stay isolated by default. A human can create a directed or two-way
+project link with `longmemory project link create`. Each direction permits only
+query-relevant L4 memory to cross into the target project's task working set;
+L1-L3 hierarchy and rules never cross. Linked memory is labelled separately
+and ranks below current-task and local-project memory. Revoking a direction
+retracts its existing linked worksets and blocks new recall.
 
 ```bash
 pnpm extension:package
@@ -370,8 +410,51 @@ longmemory migrate \
 Import coding-agent conversations as governed Chat Memory:
 
 ```bash
-longmemory port --from codex --to longmemory --all
+longmemory history inventory --from codex --all
+longmemory history plan --from codex --all
+longmemory port --from codex --to longmemory --id <confirmed-session-id> --history-manifest ./history-overrides.json --project <confirmed-project-id> --db ./central-memory.db
 ```
+
+Codex histories are planned before import because one local history store can
+contain many unrelated projects. `history inventory` and `history plan` are
+read-only; the planner preserves task, parent-task, session, and fork identities
+and emits a strict override-manifest template for human confirmation. A blanket
+`port --from codex --all` is intentionally rejected so separate projects cannot
+be collapsed into one database scope. Save `plan.override_manifest_template`,
+review it, and set only approved assignments to `confirmed: true`. The manifest
+is bound to the complete reviewed source set, every JSONL file's
+newline-committed byte cutoff and SHA-256 prefix, each portable session's
+content revision, and a reconciliation digest accounting for every source
+file. Appends and newly created tasks after that snapshot are deferred to the
+next inventory; changes or truncation before an approved cutoff fail closed.
+Malformed, unreadable, or partially parsed session files block authorization;
+empty and explicitly excluded tasks remain visible as non-importable scan
+counts.
+Codex import then requires that file plus explicit `--project` and `--db` values;
+every selected ID must be confirmed for that exact project. Credential matches
+remain blocked by default. The generated manifest may be explicitly confirmed
+to authorize the exact versioned, deterministic in-memory redaction proposal;
+that approval binds the derived revision, exact terminal markers, and
+secret-free span audit data without exposing a hash of the credential-bearing
+source object.
+The importer writes
+the authorized inventory, reconciliation, plan, manifest, source-revision,
+project, and database receipt into asset metadata while reusing the exact frozen
+derived snapshot it checked. It stages immutable history chunks containing the
+original text only for clean sessions and stable placeholders for approved
+credential spans. Capability-scoped workers extract and consolidate candidates;
+publication is a separate governed boundary. New hierarchy, changed content,
+conflicts, and level-1/major rules cannot become effective through the history
+worker alone.
+
+Reviewed history decisions can be submitted through `history govern`, while
+level-1, major-rule, and conflict confirmations use `history confirm`. Both are
+trusted local operations: they require an existing explicit database, an exact
+project, a unique action ID, and a bare `--confirm-human` attestation. The CLI
+derives the actor and evidence from its resolved local user. The bundled Codex
+MCP gateway never exposes approver actions. See the
+[CLI governance reference](docs/cli.md#govern-codex-history-publication) and
+[MCP security model](docs/mcp.md#local-stdio).
 
 See [MIGRATION.md](MIGRATION.md) and [docs/migration.md](docs/migration.md).
 
@@ -429,7 +512,8 @@ Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md), [
 
 LongMemory is licensed under the [Apache License 2.0](LICENSE). The separately
 published n8n community node uses MIT as required by n8n's strict package
-validator.
+validator. Upstream attribution and the scope of this distribution's changes
+are recorded in [NOTICE](NOTICE).
 
 ## Contributors
 

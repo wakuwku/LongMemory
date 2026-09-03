@@ -16,6 +16,16 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type Database from 'better-sqlite3';
+import {
+    central_memory_hardening_migration_sql,
+    central_memory_migration_sql,
+    central_memory_tombstone_revival_migration_sql,
+} from './central_memory_migration.js';
+import { central_project_links_migration_sql } from './central_project_links_migration.js';
+import { history_backfill_migration_sql } from './history_backfill_migration.js';
+import { history_publication_hardening_migration_sql } from './history_publication_hardening_migration.js';
+import { history_publication_migration_sql } from './history_publication_migration.js';
+import { history_worker_authorization_migration_sql } from './history_worker_authorization_migration.js';
 
 export type Migration = {
     version: number;
@@ -78,27 +88,70 @@ export function migrations(): Migration[] {
                 CREATE INDEX IF NOT EXISTS idx_world_edge_refs_edge
                     ON world_edge_refs (tenant_id, user_id, edge_id);`,
         },
+        {
+            version: 4,
+            name: 'central_memory_authoritative_governance',
+            sql: central_memory_migration_sql,
+        },
+        {
+            version: 5,
+            name: 'central_memory_governance_trigger_hardening',
+            sql: central_memory_hardening_migration_sql,
+        },
+        {
+            version: 6,
+            name: 'central_memory_tombstone_revival_confirmation',
+            sql: central_memory_tombstone_revival_migration_sql,
+        },
+        {
+            version: 7,
+            name: 'history_semantic_backfill_queue',
+            sql: history_backfill_migration_sql,
+        },
+        {
+            version: 8,
+            name: 'history_candidate_publication_governance',
+            sql: history_publication_migration_sql,
+        },
+        {
+            version: 9,
+            name: 'history_candidate_publication_governance_hardening',
+            sql: history_publication_hardening_migration_sql,
+        },
+        {
+            version: 10,
+            name: 'dedicated_history_worker_authorization',
+            sql: history_worker_authorization_migration_sql,
+        },
+        {
+            version: 11,
+            name: 'governed_l4_project_links',
+            sql: central_project_links_migration_sql,
+        },
     ];
 }
 
 export function apply_migrations(db: Database.Database, now = Date.now()): number[] {
-    db.exec(`CREATE TABLE IF NOT EXISTS migrations (
-        version INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        applied_at INTEGER NOT NULL
-    )`);
-    const applied = new Set(
-        (db.prepare('SELECT version FROM migrations').all() as Array<{ version: number }>).map((row) => row.version),
-    );
-    const completed: number[] = [];
-    for (const migration of migrations()) {
-        if (applied.has(migration.version)) continue;
-        db.transaction(() => {
+    const operation = (): number[] => {
+        db.exec(`CREATE TABLE IF NOT EXISTS migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at INTEGER NOT NULL
+        )`);
+        const has_migration = db.prepare('SELECT 1 FROM migrations WHERE version=?');
+        const record_migration = db.prepare(`INSERT INTO migrations (version, name, applied_at)
+            VALUES (?, ?, ?) ON CONFLICT(version) DO NOTHING`);
+        const completed: number[] = [];
+        for (const migration of migrations()) {
+            // Recheck only after BEGIN IMMEDIATE acquired the writer lock.  A
+            // snapshot taken before the lock can race another first startup.
+            if (has_migration.get(migration.version)) continue;
             db.exec(migration.sql);
-            db.prepare('INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, ?)')
-                .run(migration.version, migration.name, now);
-        })();
-        completed.push(migration.version);
-    }
-    return completed;
+            const recorded = record_migration.run(migration.version, migration.name, now);
+            if (recorded.changes === 1) completed.push(migration.version);
+        }
+        return completed;
+    };
+    if (db.inTransaction) return operation();
+    return db.transaction(operation).immediate();
 }

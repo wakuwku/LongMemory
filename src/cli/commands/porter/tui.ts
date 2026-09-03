@@ -72,6 +72,7 @@ export const tui_command: cli_command = async (context) => {
         const source_index = Number(await ask('Open archive number: ')) - 1;
         const source = available[source_index]?.harness;
         if (!source) throw new Error('invalid source selection');
+        if (source === 'codex') throw new Error('Codex history transfer requires the headless `port` command with explicit --history-manifest, --project, and --db authorization');
         const destination = (await ask(`Add conversations to ${context.project_id}? [Y/n] `)).trim().toLocaleLowerCase();
         if (destination === 'n' || destination === 'no') return;
 

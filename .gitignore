@@ -23,3 +23,11 @@ benchmarks/runs/
 .next
 *.env
 .longmemory
+artifacts/
+KnowledgeVault/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.tgz
+*.vsix

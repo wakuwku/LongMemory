@@ -38,3 +38,5 @@ export * from './core/i18n/index.js';
 export * from './connectors/index.js';
 export * from './mcp/index.js';
 export * from './core/embeddings/index.js';
+export * from './core/central_memory/index.js';
+export * from './integrations/obsidian/index.js';

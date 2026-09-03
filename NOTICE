@@ -1,0 +1,14 @@
+LongMemory
+Copyright 2026 CaviraOSS, nullure, and contributors
+
+This product includes software developed by CaviraOSS, nullure, and
+contributors. The upstream project is available at:
+
+    https://github.com/CaviraOSS/LongMemory
+
+This distribution contains downstream changes made in 2026, including the
+governed central-memory hierarchy, Codex integration, safe historical task
+backfill, project-scoped memory linking, and read-only Obsidian projection.
+
+The Apache License, Version 2.0, remains in LICENSE. This NOTICE is for
+attribution and change disclosure only and does not modify the License.

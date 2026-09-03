@@ -45,6 +45,22 @@ import { register_manage_skill_tool } from './tools/manage_skill.js';
 import { register_code_graph_tool } from './tools/code_graph.js';
 import { register_asset_catalog_tool } from './tools/asset_catalog.js';
 import { register_manage_asset_tool } from './tools/manage_asset.js';
+import { register_codex_memory_tool } from './tools/codex_memory.js';
+import { register_history_backfill_tool } from './tools/history_backfill.js';
+import {
+    register_history_governance_tool,
+    register_history_publication_tool,
+} from './tools/history_publication.js';
+import {
+    register_central_confirmation_tool,
+    register_central_conflict_tool,
+    register_central_context_tool,
+    register_central_finalize_turn_tool,
+    register_central_publish_tool,
+    register_central_project_link_tool,
+    register_central_register_thread_tool,
+    register_central_usage_tool,
+} from './tools/central_memory.js';
 
 export const mcp_server_name = 'longmemory-hydrograph';
 export const mcp_server_version = '0.0.0-phase.27';
@@ -66,6 +82,18 @@ const tools = {
     longmemory_code_graph: register_code_graph_tool,
     longmemory_asset_catalog: register_asset_catalog_tool,
     longmemory_manage_asset: register_manage_asset_tool,
+    longmemory_codex_memory: register_codex_memory_tool,
+    longmemory_history_backfill: register_history_backfill_tool,
+    longmemory_history_publication: register_history_publication_tool,
+    longmemory_history_governance: register_history_governance_tool,
+    longmemory_central_register_thread: register_central_register_thread_tool,
+    longmemory_central_context: register_central_context_tool,
+    longmemory_central_publish: register_central_publish_tool,
+    longmemory_central_confirmation: register_central_confirmation_tool,
+    longmemory_central_conflict: register_central_conflict_tool,
+    longmemory_central_project_link: register_central_project_link_tool,
+    longmemory_central_usage: register_central_usage_tool,
+    longmemory_central_finalize_turn: register_central_finalize_turn_tool,
 } as const;
 
 export function create_longmemory_mcp(config: mcp_server_config = {}): longmemory_mcp {
@@ -74,23 +102,25 @@ export function create_longmemory_mcp(config: mcp_server_config = {}): longmemor
     for (const [name, register] of Object.entries(tools)) {
         if (runtime.access.allowed_tools.has(name as keyof typeof tools)) register(server, runtime);
     }
-    register_projects_resource(server, runtime);
-    register_project_summary_resource(server, runtime);
-    register_project_context_resource(server, runtime);
-    register_decisions_resource(server, runtime);
-    register_tasks_resource(server, runtime);
-    register_skills_resource(server, runtime);
-    register_assets_resources(server, runtime);
-    register_agent_manifest_resource(server, runtime);
-    register_conflicts_resource(server, runtime);
-    register_entity_resource(server, runtime);
-    register_world_resource(server, runtime);
-    register_memory_resource(server, runtime);
-    register_before_coding_prompt(server);
-    register_after_coding_prompt(server);
-    register_debug_session_prompt(server);
-    register_project_handoff_prompt(server);
-    register_architecture_context_prompt(server);
+    if (runtime.profile === 'default') {
+        register_projects_resource(server, runtime);
+        register_project_summary_resource(server, runtime);
+        register_project_context_resource(server, runtime);
+        register_decisions_resource(server, runtime);
+        register_tasks_resource(server, runtime);
+        register_skills_resource(server, runtime);
+        register_assets_resources(server, runtime);
+        register_agent_manifest_resource(server, runtime);
+        register_conflicts_resource(server, runtime);
+        register_entity_resource(server, runtime);
+        register_world_resource(server, runtime);
+        register_memory_resource(server, runtime);
+        register_before_coding_prompt(server);
+        register_after_coding_prompt(server);
+        register_debug_session_prompt(server);
+        register_project_handoff_prompt(server);
+        register_architecture_context_prompt(server);
+    }
     return { server, runtime };
 }
 

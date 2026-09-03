@@ -26,9 +26,26 @@ export const verify_command: cli_command = async (context) => {
     const harness = parse_harness(flag(context, 'from'));
     const sample = Math.max(1, Math.min(1_000, number_flag(context, 'sample', 10) ?? 10));
     const result = await verify_sessions(harness, sample, context.env);
-    if (result.failures.length) context.exit_code = exit_codes.generic;
-    emit(context, { ok: result.failures.length === 0, ...result }, () => panel('', context.colors, {
-        title: `Verify ${harness}`, kind: result.failures.length ? 'danger' : 'success', width: context.terminal_width,
-        rows: [['Discovered', result.discovered], ['Verified', result.verified], ['Failures', result.failures.length]],
+    const reconciliation = result.reconciliation;
+    const failed = result.failures.length > 0 || (reconciliation?.parse_failures ?? 0) > 0;
+    if (failed) context.exit_code = exit_codes.generic;
+    const rows: Array<[string, unknown]> = [
+        ['Discovered', result.discovered],
+        ['Verified', result.verified],
+        ['Failures', result.failures.length],
+    ];
+    if (reconciliation) rows.push(
+        ['Source JSONL files', reconciliation.source_files],
+        ['Importable tasks', reconciliation.importable_tasks],
+        ['Empty tasks', reconciliation.empty_tasks],
+        ['Parse failures', reconciliation.parse_failures],
+        ['Excluded tasks', reconciliation.excluded_tasks],
+        ['Partial tasks', reconciliation.partial_tasks],
+    );
+    emit(context, { ok: !failed, ...result }, () => panel('', context.colors, {
+        title: `Verify ${harness}`,
+        kind: failed ? 'danger' : reconciliation && (reconciliation.empty_tasks || reconciliation.partial_tasks) ? 'warning' : 'success',
+        width: context.terminal_width,
+        rows,
     }));
 };

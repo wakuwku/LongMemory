@@ -34,10 +34,12 @@
         "dist",
         "README.md",
         "docs",
-        "LICENSE"
+        "LICENSE",
+        "NOTICE"
     ],
     "scripts": {
-        "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/stores/sqlite',{recursive:true});fs.copyFileSync('src/stores/sqlite/schema.sql','dist/stores/sqlite/schema.sql')\"",
+        "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/stores/sqlite',{recursive:true});fs.copyFileSync('src/stores/sqlite/schema.sql','dist/stores/sqlite/schema.sql')\"",
+        "test:unit": "node --import tsx --test src/cli/context/central_storage.test.ts src/cli/commands/porter/history_govern.test.ts src/cli/commands/porter/history_worker.test.ts src/cli/porter/adapters/codex.test.ts src/cli/porter/history_plan.test.ts src/cli/porter/history_authorization.test.ts src/cli/porter/history_redaction.test.ts src/core/central_memory/central_memory.test.ts src/core/central_memory/history_backfill.test.ts src/core/central_memory/history_publication.test.ts src/integrations/codex_hooks/codex_hooks.test.ts src/integrations/obsidian/projector.test.ts src/mcp/central_memory_tools.test.ts src/mcp/history_backfill_tool.test.ts src/mcp/history_publication_tool.test.ts src/stores/sqlite/history_publication_hardening.test.ts src/stores/sqlite/integrity.test.ts integrations/codex-longmemory/scripts/plugin-runtime.test.mjs",
         "start": "node dist/server/index.js",
         "dev": "node --import tsx src/cli/index.ts status",
         "bench": "tsx benchmarks/src/cli.ts run --providers=longmemory --datasets=smoke --no-resume",
@@ -66,7 +68,7 @@
         "branding:apply": "node tools/branding.mjs --apply",
         "branding:check": "node tools/branding.mjs",
         "typecheck": "tsc --noEmit -p tsconfig.json",
-        "release:check": "pnpm branding:check && pnpm release:files && pnpm dashboard:audit && pnpm typecheck && pnpm extension:check && pnpm integration:check && pnpm bench:typecheck && pnpm bench:ci && pnpm build && pnpm extension:build && npm --prefix dashboard run build"
+        "release:check": "pnpm branding:check && pnpm release:files && pnpm dashboard:audit && pnpm test:unit && pnpm typecheck && pnpm extension:check && pnpm integration:check && pnpm bench:typecheck && pnpm bench:ci && pnpm build && pnpm extension:build && npm --prefix dashboard run build"
     },
     "devDependencies": {
         "@types/better-sqlite3": "^7.6.13",

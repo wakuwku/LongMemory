@@ -67,7 +67,9 @@ longmemory tui
 longmemory detect
 longmemory session discover --from claude-code --limit 100
 longmemory port --from claude-code --to longmemory --all
-longmemory port --from codex --to longmemory --id <session-id> --force
+longmemory history inventory --from codex --all
+longmemory history plan --from codex --all
+longmemory port --from codex --to longmemory --id <confirmed-session-id> --history-manifest ./history-overrides.json --project <confirmed-project-id> --db ./central-memory.db
 longmemory verify --from opencode --sample 10
 ```
 
@@ -76,6 +78,229 @@ portable session representation. It imports into the selected LongMemory project
 as governed Chat Memory; it does not mutate proprietary harness stores. Normal
 automation gets one JSON result, while `--jsonl` emits progress events. See
 [session-porter.md](session-porter.md).
+
+Codex history can span unrelated repositories and creative projects. Before
+importing it, `history inventory` creates a read-only portable-session inventory
+and `history plan` groups stable candidates by normalized working directory
+while preserving source-session, parent-task, session, and fork relationships.
+The plan emits unresolved groups plus a strict JSON override-manifest template;
+cwd-wide and per-session decisions become importable only when explicitly
+marked `confirmed: true`. Unknown fields, unknown sessions/cwds, and duplicate
+assignments are rejected. `port --from codex --all` is disabled by design; use
+explicit `--id` values for one confirmed project at a time. Copy
+`plan.override_manifest_template` to a JSON file before editing it. Its
+`inventory_id` binds the decisions to the complete parsed inventory, including
+the safe derived content revision of every affected session and a reconciliation digest
+for every source file. The emitted `source_snapshot` also freezes every
+reviewed JSONL path at its last complete-line byte cutoff and binds that prefix
+with SHA-256. Later appends and new tasks are deferred to a new inventory;
+changes or truncation before a reviewed cutoff are rejected. Malformed or
+unreadable files and importable files with skipped malformed lines block
+authorization; empty and explicitly excluded tasks remain visible in the scan
+counts but are not treated as memories. Codex import requires the
+confirmed file as `--history-manifest` and requires explicit persistent `--db`
+and `--project` targets. Each selected ID must be a confirmed assignment to that
+project; excluded, unresolved, stale, duplicate, and other-project selections
+fail before the destination database is opened. Other projects may remain
+unconfirmed for a project-sized batch.
+
+Selected Codex snapshots receive a versioned high-signal credential scan during
+planning and authorization. The default remains a whole-batch block before
+SQLite is opened. For an affected task, the emitted manifest contains a
+`redaction_policy` proposal with `confirmed: false` globally and per session.
+Only after a human explicitly confirms that exact policy and every selected
+session may the importer create an in-memory derived snapshot. Each matched
+span is replaced by a stable marker; the original source file is never changed.
+Authorization binds the derived revision, detector and policy versions,
+structural locations, kinds, exact terminal marker IDs/count, and a secret-free
+transformation-manifest hash. It deliberately omits the original source-object
+revision so the review artifact and database cannot become an offline secret
+verifier. Staging must reuse the exact frozen derived object and live evidence
+scoped from the issued authorization. Reports expose only safe evidence, never
+a matched value, surrounding source text, or value-derived fingerprint. A
+copied, forged, stale, edited, missing, duplicate, malformed, extra, or
+unapproved marker fails closed.
+
+## Authorize a dedicated history worker
+
+Binding a Codex task to a project does not authorize it to read or publish
+historical evidence. A human must grant that separate machine-enforced scope
+through the local CLI. Every grant must explicitly select one run, one plan,
+or all present and future runs in the project:
+
+```bash
+longmemory history worker authorize <codex-session-id> \
+  --run-id <history-run-id> \
+  --db /absolute/path/to/central-memory.db \
+  --project confirmed-project-id \
+  --user local-operator \
+  --action-id authorize-history-worker-001 \
+  --confirm-human
+```
+
+Use `--plan-id <history-plan-id>` instead of `--run-id` for a plan scope. A
+project-wide grant requires the deliberately explicit `--all-runs` flag; it
+cannot be combined with either narrow selector. Revoke and inspect grants with:
+
+```bash
+longmemory history worker revoke <authorization-id> --db <db> --project <id> \
+  --action-id revoke-history-worker-001 --confirm-human
+longmemory history worker list --db <db> --project <id>
+longmemory history worker list --db <db> --project <id> --all
+```
+
+Authorization binds tenant, user, project, Codex session, server-derived worker
+identity, and optional run/plan scope. Revocation takes effect immediately,
+including for an already leased chunk. Scope and audit evidence are immutable;
+the runtime recomputes the persisted scope hash on every use.
+
+## Govern Codex history publication
+
+Use the local governance commands only after a human has reviewed the exact
+candidate, hierarchy proposal, plan, or confirmation. These commands write to
+the existing central SQLite database; they do not extract history or create a
+publication plan.
+
+Every decision requires the same authority flags:
+
+```bash
+--db /absolute/path/to/central-memory.db \
+--project confirmed-project-id \
+--action-id operator-chosen-id \
+--confirm-human
+```
+
+`--db` must name an existing persistent database, and `--project` cannot be
+`current`. The target must belong to the resolved tenant, CLI user, and project.
+Set the tenant with `LONGMEMORY_TENANT_ID`; select the CLI user with `--user`,
+`LONGMEMORY_USER_ID`, or local configuration. LongMemory derives the recorded
+actor from that CLI user and generates the `local_cli` evidence itself. The
+commands reject caller-supplied evidence, actor, or channel fields.
+
+Use a stable, unique `--action-id` for each human decision. Replaying the same
+action with identical content is idempotent; reusing its ID for different
+content fails. Pass `--confirm-human` as a bare flag only after the decision is
+explicit. `--confirm-human=false` and `--dry-run` cannot submit a decision. An
+optional `--note` records up to 2,000 characters of rationale.
+
+History-governance actions require these selectors:
+
+| Action | Selector | Valid use |
+| ------ | -------- | --------- |
+| `accept_hierarchy` | `--proposal-id <id>` | Accept the selected hierarchy proposal and materialize proposed roles or tasks |
+| `reject_hierarchy` | `--proposal-id <id>` | Reject the selected hierarchy proposal for revision |
+| `approve_update` | `--plan-version <number>` | Approve the current plan whose relation is `update` |
+| `approve_conflict` | `--plan-version <number>` | Approve the current plan whose relation is `conflict` |
+| `retry` | None | Return a `retryable` publication to `ready` after correcting the failure |
+| `discard` | None | Terminate a publication that should not proceed |
+
+For example, accept a reviewed hierarchy proposal:
+
+```bash
+longmemory history govern accept_hierarchy <publication-id> \
+  --proposal-id <proposal-id> \
+  --db /absolute/path/to/central-memory.db \
+  --project confirmed-project-id \
+  --user local-operator \
+  --action-id accept-hierarchy-001 \
+  --note "Reviewed project, role, and task assignment" \
+  --confirm-human
+```
+
+Approve a reviewed update or conflict against the exact current plan version:
+
+```bash
+longmemory history govern approve_update <publication-id> \
+  --plan-version 3 \
+  --db /absolute/path/to/central-memory.db \
+  --project confirmed-project-id \
+  --user local-operator \
+  --action-id approve-update-001 \
+  --confirm-human
+```
+
+After the worker executes a level-1, major-rule, or conflict plan, it can return
+`pending_confirmation`. Resolve that separate central-memory gate with the
+reported confirmation ID:
+
+```bash
+longmemory history confirm approve <confirmation-id> \
+  --db /absolute/path/to/central-memory.db \
+  --project confirmed-project-id \
+  --user local-operator \
+  --action-id approve-confirmation-001 \
+  --confirm-human
+```
+
+`history confirm` accepts `approve`, `reject`, or `cancel`. When the confirmation
+belongs to a history publication, the command also reconciles that publication
+to the authoritative result. Historical transcript text never satisfies
+`--confirm-human` and cannot authorize any of these actions.
+
+## Govern project links
+
+Projects are isolated unless a human creates an explicit directed link. Each
+direction allows only query-relevant L4 memory to be recalled from the source
+project by the target project. It does not merge the projects, move tasks, or
+share L1-L3 rules.
+
+```bash
+longmemory project link create novel ai-painting \
+  --two-way \
+  --db /absolute/path/to/central-memory.db \
+  --project novel \
+  --user local-operator \
+  --action-id link-novel-art-001 \
+  --confirm-human
+
+longmemory project link list \
+  --status active \
+  --db /absolute/path/to/central-memory.db \
+  --project novel \
+  --user local-operator
+
+longmemory project link revoke <directed-link-id> \
+  --db /absolute/path/to/central-memory.db \
+  --project novel \
+  --user local-operator \
+  --action-id revoke-novel-art-001 \
+  --confirm-human
+```
+
+Omit `--two-way` to create only `source -> target`. Revocation affects one
+direction, retains its audit record, retracts that direction's existing linked
+worksets, and prevents future recall. `create` and `revoke` require an existing
+persistent database, an endpoint selected by explicit `--project`, a stable
+action ID, and `--confirm-human`.
+
+## Obsidian projection
+
+```bash
+longmemory obsidian project \
+  --db ./central-memory.db \
+  --vault ./KnowledgeVault
+longmemory obsidian project \
+  --db ./central-memory.db \
+  --vault ./KnowledgeVault \
+  --projection-root SharedMemory \
+  --dry-run
+```
+
+The command opens an existing central-memory database read-only and projects it
+as deterministic Markdown pages. The default generated folder is `LongMemory`;
+human changes belong in `LongMemory/Proposals/inbox/`. Projection is atomic and
+idempotent, and it refuses to overwrite generated files changed outside
+LongMemory. `--dry-run` validates the database and resolved output settings
+without writing the vault. In addition to projects, tasks, formal memories,
+sources, confirmations, conflicts, and dependencies, the vault exposes the
+directed project-link records, history-publication queue, hierarchy proposals, immutable governance decisions,
+publication plans, and execution attempts. Separate dashboards show pending
+hierarchy decisions, changed-content review, and central confirmation.
+Before writing Markdown, the projector scans the complete scoped projection
+snapshot and fails closed on obvious credential material without echoing its
+value. This prevents a legacy or manually altered database from copying a
+secret into the vault; it does not remove the source row or clean an older
+projection that was produced by another version.
 
 ## Serve
 

@@ -1,10 +1,19 @@
 {
-    "longmemory": {
-        "command": "longmemory",
-        "args": [
-            "mcp",
-            "--project",
-            "current"
-        ]
+    "mcpServers": {
+        "longmemory": {
+            "command": "node",
+            "args": [
+                "scripts/codex-memory-mcp.mjs"
+            ],
+            "cwd": ".",
+            "env_vars": [
+                "LONGMEMORY_PLUGIN_DATA",
+                "LONGMEMORY_DB_PATH",
+                "CODEX_HOME",
+                "LONGMEMORY_CLI_COMMAND",
+                "LONGMEMORY_TENANT_ID",
+                "LONGMEMORY_USER_ID"
+            ]
+        }
     }
 }

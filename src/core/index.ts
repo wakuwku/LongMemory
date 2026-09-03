@@ -32,3 +32,4 @@ export * from './connectors/index.js';
 export * from './project/index.js';
 export * from './i18n/index.js';
 export * from './embeddings/index.js';
+export * from './central_memory/index.js';

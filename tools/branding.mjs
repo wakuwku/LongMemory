@@ -109,18 +109,43 @@ function insert_header(path, content, style) {
     return `${header}\n${content}`;
 }
 
+function strip_leading_headers(content, style) {
+    let prefix = '';
+    let body = content;
+    if (style === 'hash') {
+        const first_newline = body.indexOf('\n');
+        const first_line = first_newline >= 0 ? body.slice(0, first_newline) : body;
+        if (first_line.startsWith('#!') || first_line.startsWith('# syntax=')) {
+            prefix = `${first_line}\n`;
+            body = first_newline >= 0 ? body.slice(first_newline + 1) : '';
+        }
+    }
+    const pattern = style === 'block'
+        ? /^\/\*[\s\S]*?\*\/\r?\n*/
+        : style === 'html'
+            ? /^<!--[\s\S]*?-->\r?\n*/
+            : /^(?:#[^\r\n]*(?:\r?\n|$))+\r?\n*/;
+    for (;;) {
+        const match = body.match(pattern);
+        if (!match || !match[0].includes('cavira oss (c) 2026')) break;
+        body = body.slice(match[0].length);
+    }
+    return `${prefix}${body}`;
+}
+
 const missing = [];
 for (const path of repository_files()) {
     const style = style_for(path);
-    if (!style || path === '.github/ascii.txt' || path === 'pnpm-lock.yaml'
+    if (!style || path === 'pnpm-lock.yaml'
         || path === 'integrations/n8n-nodes-longmemory/eslint.config.mjs'
         || path === 'dashboard/next-env.d.ts') continue;
     const absolute = resolve(root, path);
     const content = readFileSync(absolute, 'utf8');
     const prefix = content.slice(0, 2_048);
-    if (prefix.includes('cavira oss (c) 2026') && prefix.includes(`file  : ${path}`)) continue;
+    const header_count = prefix.match(/cavira oss \(c\) 2026/g)?.length ?? 0;
+    if (header_count === 1 && prefix.includes(`file  : ${path}`)) continue;
     missing.push(path);
-    if (apply) writeFileSync(absolute, insert_header(path, content, style), 'utf8');
+    if (apply) writeFileSync(absolute, insert_header(path, strip_leading_headers(content, style), style), 'utf8');
 }
 
 if (missing.length > 0 && !apply) {

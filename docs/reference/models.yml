@@ -3,12 +3,12 @@
 #    / /   / __ \/ __ \/ __ `/ /|_/ / _ \/ __ `__ \/ __ \/ ___/ / / /
 #   / /___/ /_/ / / / / /_/ / /  / /  __/ / / / / / /_/ / /  / /_/ /
 #  /_____/\____/_/ /_/\__, /_/  /_/\___/_/ /_/ /_/\____/_/   \__, /
-#                      /____/                                 /____/
+#                     /____/                                 /_____/
 #
 #  cavira oss (c) 2026  -  nullure (c) 2026
 #  ----------------------------------------------------------
-#  file  : models.yml
-#  usage : supports LongMemory models
+#  file  : docs/reference/models.yml
+#  usage : documents LongMemory models
 
 providers:
     openai:

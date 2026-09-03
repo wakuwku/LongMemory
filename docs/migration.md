@@ -16,6 +16,19 @@
 
 Phase 22 migrates useful memory into Hydrograph form. It does not preserve the legacy storage architecture, indexes, cache state, or malformed data.
 
+## Current namespace
+
+The package, CLI, environment prefix, extension namespace, routes, and
+integration IDs use the LongMemory name:
+
+- npm package and CLI: `longmemory`
+- environment variables: `LONGMEMORY_*`
+- workspace state: `.longmemory/`
+- dashboard proxy: `/api/longmemory`
+
+Compatibility aliases for the previous product name are intentionally not
+shipped.
+
 ## Run a migration
 
 ```bash
@@ -111,3 +124,19 @@ The command still writes the report when individual records are skipped. Check `
 $result = longmemory migrate --from ./legacy.jsonl --to ./longmemory.db | ConvertFrom-Json
 if (-not $result.benchmark_result.passed) { exit 1 }
 ```
+
+## Import agent sessions
+
+Session adapters read supported agent stores without modifying them:
+
+```bash
+longmemory detect
+longmemory session discover --from claude-code
+longmemory port --from claude-code --to longmemory --all
+longmemory history inventory --from codex --all
+longmemory history plan --from codex --all
+```
+
+Codex history uses a separate governed flow: inventory, plan, explicit project
+assignment, import, extraction, and confirmation-gated publication. See the
+[history-import guide](session-porter.md) for the complete workflow.

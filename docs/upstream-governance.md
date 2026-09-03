@@ -4,12 +4,12 @@
    / /   / __ \/ __ \/ __ `/ /|_/ / _ \/ __ `__ \/ __ \/ ___/ / / /
   / /___/ /_/ / / / / /_/ / /  / /  __/ / / / / / /_/ / /  / /_/ /
  /_____/\____/_/ /_/\__, /_/  /_/\___/_/ /_/ /_/\____/_/   \__, /
-                     /____/                                 /____/
+                    /____/                                 /_____/
 
  cavira oss (c) 2026  -  nullure (c) 2026
  ==========================================================
- file  : GOVERNANCE.md
- usage : supports LongMemory governance
+ file  : docs/upstream-governance.md
+ usage : documents LongMemory upstream governance
 -->
 
 # Governance

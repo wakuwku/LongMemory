@@ -202,12 +202,12 @@ integrations, benchmarks, builds, and the dashboard.
 ## Documentation
 
 - [Codex integration](integrations/codex-longmemory/README.md)
-- [Architecture](ARCHITECTURE.md)
+- [Architecture](docs/architecture.md)
 - [CLI](docs/cli.md)
 - [MCP](docs/mcp.md)
 - [History import](docs/session-porter.md)
-- [Migration](MIGRATION.md)
-- [Security](SECURITY.md)
+- [Migration](docs/migration.md)
+- [Security](.github/SECURITY.md)
 
 LongMemory is local-first, but recalled content remains untrusted evidence.
 Keep credentials outside memory and repository files, preserve server-bound

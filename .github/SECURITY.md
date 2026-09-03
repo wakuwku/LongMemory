@@ -4,19 +4,19 @@
    / /   / __ \/ __ \/ __ `/ /|_/ / _ \/ __ `__ \/ __ \/ ___/ / / /
   / /___/ /_/ / / / / /_/ / /  / /  __/ / / / / / /_/ / /  / /_/ /
  /_____/\____/_/ /_/\__, /_/  /_/\___/_/ /_/ /_/\____/_/   \__, /
-                     /____/                                 /____/
+                    /____/                                 /_____/
 
  cavira oss (c) 2026  -  nullure (c) 2026
  ==========================================================
- file  : SECURITY.md
- usage : supports LongMemory security
+ file  : .github/SECURITY.md
+ usage : implements the LongMemory SECURITY component
 -->
 
 # Security policy
 
 ## Reporting
 
-Use GitHub private vulnerability reporting for `CaviraOSS/LongMemory`. Do not disclose exploitable details in a public issue. Include affected versions, impact, reproduction steps, and any suggested mitigation. Maintainers will acknowledge valid reports, coordinate a fix, and publish an advisory when users can update safely.
+Use GitHub private vulnerability reporting for this repository when available. Do not disclose exploitable details in a public issue. Include affected versions, impact, reproduction steps, and any suggested mitigation. Maintainers will acknowledge valid reports, coordinate a fix, and publish an advisory when users can update safely.
 
 ## Supported version
 

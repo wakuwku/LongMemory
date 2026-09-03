@@ -4,12 +4,12 @@
    / /   / __ \/ __ \/ __ `/ /|_/ / _ \/ __ `__ \/ __ \/ ___/ / / /
   / /___/ /_/ / / / / /_/ / /  / /  __/ / / / / / /_/ / /  / /_/ /
  /_____/\____/_/ /_/\__, /_/  /_/\___/_/ /_/ /_/\____/_/   \__, /
-                     /____/                                 /____/
+                    /____/                                 /_____/
 
  cavira oss (c) 2026  -  nullure (c) 2026
  ==========================================================
- file  : CODE_OF_CONDUCT.md
- usage : supports LongMemory code of conduct
+ file  : .github/CODE_OF_CONDUCT.md
+ usage : implements the LongMemory CODE OF CONDUCT component
 -->
 
 # Contributor Covenant Code of Conduct

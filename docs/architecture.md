@@ -4,7 +4,7 @@
    / /   / __ \/ __ \/ __ `/ /|_/ / _ \/ __ `__ \/ __ \/ ___/ / / /
   / /___/ /_/ / / / / /_/ / /  / /  __/ / / / / / /_/ / /  / /_/ /
  /_____/\____/_/ /_/\__, /_/  /_/\___/_/ /_/ /_/\____/_/   \__, /
-                     /____/                                 /____/
+                    /____/                                 /_____/
 
  cavira oss (c) 2026  -  nullure (c) 2026
  ==========================================================
@@ -12,32 +12,41 @@
  usage : documents LongMemory architecture
 -->
 
-# LongMemory Hydrograph architecture
+# LongMemory architecture
 
-LongMemory Hydrograph ships as one TypeScript npm package named `longmemory`.
+LongMemory is one TypeScript package with a shared Hydrograph engine. Library imports, the CLI, the HTTP server, MCP transports, the dashboard proxy, and integrations all use the same memory semantics.
 
-The package has three public entry modes:
+```mermaid
+graph LR
+  A[Events and documents] --> I[Immutable ingest pipeline]
+  I --> H[(Hydrograph)]
+  H --> R[Recall modes]
+  R --> C[Bounded context]
+  H --> P[Project memory]
+  P --> M[MCP tools and resources]
+  H --> S[SQLite store]
+  M --> G[Agents and IDEs]
+  S --> D[Dashboard and API]
+```
 
-- library import from `src/index.ts`
-- CLI binary named `longmemory`
-- self-hosted API server from `src/server`
+## Core invariants
 
-There is no separate SDK package. The package itself is the SDK.
+- Memory content and provenance are immutable; mutable lifecycle state is stored separately.
+- Recorded time and valid time are distinct.
+- Project, tenant, user, agent, and framework identity are enforced by the runtime.
+- Recall is read-only and token bounded.
+- Deny rules override grants for governed assets.
+- SQLite is the local durable store; in-memory storage is available for embedded use.
 
-## Phase 1 boundaries
+## Surfaces
 
-Phase 1 creates the foundation only:
+- `src/index.ts`: public package API.
+- `src/cli`: deterministic CLI and interactive session porter.
+- `src/server`: authenticated HTTP API and Streamable HTTP MCP endpoint.
+- `src/mcp`: 13 governed tools, resources, prompts, and transports.
+- `dashboard`: Next.js operational interface.
+- `apps/vscode-extension`: native VS Code client over stable CLI JSON.
+- `integrations`: host-native plugins, MCP configurations, and framework examples.
+- `benchmarks`: auditable LongMemEval, LoCoMo, BEAM, and smoke harness.
 
-- package scripts
-- CLI and server entry points
-- `createMemory` placeholder
-- invariants
-- docs
-- acceptance tests
-- benchmark placeholder command
-
-Phase 1 does not include production memory storage, dashboard, hosted service, graph visualization, vector database integration, or external connectors.
-
-## Shared engine rule
-
-The API server and CLI must both call `createMemory`. They must not construct separate engine paths.
+Detailed subsystem documents live alongside this page in [`docs/`](.).

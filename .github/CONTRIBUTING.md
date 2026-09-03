@@ -4,12 +4,12 @@
    / /   / __ \/ __ \/ __ `/ /|_/ / _ \/ __ `__ \/ __ \/ ___/ / / /
   / /___/ /_/ / / / / /_/ / /  / /  __/ / / / / / /_/ / /  / /_/ /
  /_____/\____/_/ /_/\__, /_/  /_/\___/_/ /_/ /_/\____/_/   \__, /
-                     /____/                                 /____/
+                    /____/                                 /_____/
 
  cavira oss (c) 2026  -  nullure (c) 2026
  ==========================================================
- file  : CONTRIBUTING.md
- usage : supports LongMemory contributing
+ file  : .github/CONTRIBUTING.md
+ usage : implements the LongMemory CONTRIBUTING component
 -->
 
 # Contributing to LongMemory
@@ -17,7 +17,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/CaviraOSS/LongMemory.git
+git clone https://github.com/wakuwku/LongMemory.git
 cd LongMemory
 corepack enable
 pnpm install --frozen-lockfile

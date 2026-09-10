@@ -13,6 +13,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
     basename,
@@ -90,6 +91,69 @@ function fallbackPluginData(env, homeDirectory) {
     return join(codexHome, 'plugins', 'data', DEFAULT_PLUGIN_DATA_DIRECTORY);
 }
 
+function installedPluginIdentity(scriptPath) {
+    let candidate = dirname(absolutePath(scriptPath, 'plugin script path'));
+    while (true) {
+        const versionDirectory = candidate;
+        const pluginDirectory = dirname(versionDirectory);
+        const marketplaceDirectory = dirname(pluginDirectory);
+        const cacheDirectory = dirname(marketplaceDirectory);
+        const pluginsDirectory = dirname(cacheDirectory);
+        if (basename(cacheDirectory).toLocaleLowerCase('en-US') === 'cache'
+            && basename(pluginsDirectory).toLocaleLowerCase('en-US') === 'plugins') {
+            const plugin = basename(pluginDirectory);
+            const marketplace = basename(marketplaceDirectory);
+            const codexHome = dirname(pluginsDirectory);
+            if (plugin && marketplace) return { codexHome, marketplace, plugin };
+        }
+        const parent = dirname(candidate);
+        if (parent === candidate) return null;
+        candidate = parent;
+    }
+}
+
+function tomlString(value) {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1);
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        try { return JSON.parse(trimmed); } catch { return null; }
+    }
+    return null;
+}
+
+function executablePath(value) {
+    if (process.platform !== 'win32') return value;
+    if (value.startsWith('\\\\?\\UNC\\')) return `\\\\${value.slice(8)}`;
+    if (value.startsWith('\\\\?\\')) return value.slice(4);
+    return value;
+}
+
+function localMarketplaceCli(scriptPath) {
+    if (!scriptPath) return null;
+    const identity = installedPluginIdentity(scriptPath);
+    if (!identity) return null;
+    const configPath = join(identity.codexHome, 'config.toml');
+    let config;
+    try { config = readFileSync(configPath, 'utf8'); } catch { return null; }
+    const escaped = identity.marketplace.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const header = new RegExp(`^\\s*\\[marketplaces\\.(?:${escaped}|"${escaped}"|'${escaped}')\\]\\s*$`);
+    let inMarketplace = false;
+    for (const line of config.split(/\r?\n/)) {
+        if (/^\s*\[/.test(line)) {
+            inMarketplace = header.test(line);
+            continue;
+        }
+        if (!inMarketplace) continue;
+        const match = /^\s*source\s*=\s*(.+?)\s*(?:#.*)?$/.exec(line);
+        if (!match) continue;
+        const source = tomlString(match[1]);
+        if (!source) return null;
+        const cli = join(executablePath(source), 'dist', 'cli', 'index.js');
+        return existsSync(cli) ? cli : null;
+    }
+    return null;
+}
+
 export function resolvePluginRuntime({ env = process.env, scriptPath, homeDirectory } = {}) {
     const configuredCodexHome = String(env.CODEX_HOME ?? '').trim();
     const pluginData = environmentPluginData(env)
@@ -151,13 +215,22 @@ export function collectBounded(stream, limit = MAX_HOOK_IO_BYTES, onOverflow = (
     });
 }
 
-function invocation(env, args) {
+export function resolveLongMemoryInvocation(env, args, { scriptPath } = {}) {
     const configured = String(env.LONGMEMORY_CLI_COMMAND ?? '').trim();
     if (configured.includes('\0')) throw new Error('LONGMEMORY_CLI_COMMAND contains NUL');
     if (configured && /\.m?js$/i.test(configured)) {
         return { command: process.execPath, args: [configured, ...args] };
     }
-    const executable = configured || (process.platform === 'win32' ? 'longmemory.cmd' : 'longmemory');
+    const marketplaceCli = !configured ? localMarketplaceCli(scriptPath) : null;
+    if (marketplaceCli) return { command: process.execPath, args: [marketplaceCli, ...args] };
+    let executable = configured || (process.platform === 'win32' ? 'longmemory.cmd' : 'longmemory');
+    if (!configured && process.platform === 'win32') {
+        const windowsCandidates = [
+            String(env.PNPM_HOME ?? '').trim(),
+            String(env.APPDATA ?? '').trim() ? join(String(env.APPDATA).trim(), 'npm') : '',
+        ].filter(Boolean).map((directory) => join(directory, 'longmemory.cmd'));
+        executable = windowsCandidates.find((candidate) => existsSync(candidate)) ?? executable;
+    }
     if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable)) {
         return {
             command: env.ComSpec || process.env.ComSpec || 'cmd.exe',
@@ -169,7 +242,7 @@ function invocation(env, args) {
 
 export function spawnLongMemory(args, options = {}) {
     const env = options.env ?? process.env;
-    const launch = invocation(env, args);
+    const launch = resolveLongMemoryInvocation(env, args, { scriptPath: options.scriptPath });
     return spawn(launch.command, launch.args, {
         env,
         stdio: options.stdio ?? ['pipe', 'pipe', 'pipe'],

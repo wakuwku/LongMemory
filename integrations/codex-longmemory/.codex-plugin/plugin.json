@@ -1,6 +1,6 @@
 {
   "name": "longmemory",
-  "version": "0.1.0+codex.20260903165452",
+  "version": "0.1.0+codex.20260909190537",
   "description": "Durable project memory, recall, decisions, tasks, and governed context for Codex and ChatGPT.",
   "author": {
     "name": "CaviraOSS",
@@ -16,6 +16,7 @@
     "coding-agent"
   ],
   "skills": "./skills/",
+  "hooks": "./hooks.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "LongMemory",

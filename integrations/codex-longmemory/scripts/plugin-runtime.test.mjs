@@ -14,9 +14,9 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import test from 'node:test';
 import {
@@ -25,6 +25,7 @@ import {
     codexMemoryMcpArgs,
     collectBounded,
     readBounded,
+    resolveLongMemoryInvocation,
     resolvePluginRuntime,
 } from './plugin-runtime.mjs';
 
@@ -36,6 +37,93 @@ test('the bundled MCP launcher selects the restricted Codex memory gateway profi
     assert.deepEqual(codexMemoryMcpArgs(), [
         'mcp', '--project', 'current', '--profile', 'codex-memory-gateway',
     ]);
+});
+
+test('Windows launcher resolves globally installed npm CLI without relying on PATH', () => {
+    if (process.platform !== 'win32') return;
+    const root = temporaryDirectory();
+    try {
+        const npmBin = join(root, 'npm');
+        const cli = join(npmBin, 'longmemory.cmd');
+        mkdirSync(npmBin, { recursive: true });
+        writeFileSync(cli, '@echo off\r\n', 'utf8');
+        const invocation = resolveLongMemoryInvocation({
+            ...process.env,
+            PNPM_HOME: '',
+            APPDATA: root,
+        }, ['version']);
+        assert.match(invocation.command, /cmd\.exe$/i);
+        assert.equal(invocation.args[0], '/d');
+        assert.equal(invocation.args[3], 'call');
+        assert.equal(resolve(invocation.args[4]), resolve(cli));
+        assert.deepEqual(invocation.args.slice(5), ['version']);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('installed local-marketplace launcher resolves the repository CLI before global npm', () => {
+    const root = temporaryDirectory();
+    try {
+        const codexHome = join(root, '.codex');
+        const marketplaceRoot = join(root, 'LongMemory source');
+        const cli = join(marketplaceRoot, 'dist', 'cli', 'index.js');
+        const scriptPath = join(
+            codexHome, 'plugins', 'cache', 'longmemory', 'longmemory', '0.1.0',
+            'scripts', 'codex-memory-mcp.mjs',
+        );
+        mkdirSync(dirname(cli), { recursive: true });
+        mkdirSync(codexHome, { recursive: true });
+        writeFileSync(cli, '// local marketplace CLI\n', 'utf8');
+        writeFileSync(join(codexHome, 'config.toml'), [
+            '[marketplaces.longmemory]',
+            `source = '${marketplaceRoot}'`,
+            '',
+        ].join('\n'), 'utf8');
+        const invocation = resolveLongMemoryInvocation({
+            ...process.env,
+            LONGMEMORY_CLI_COMMAND: '',
+            PNPM_HOME: '',
+            APPDATA: join(root, 'blocked-global-profile'),
+        }, ['version'], { scriptPath });
+        assert.equal(invocation.command, process.execPath);
+        assert.equal(resolve(invocation.args[0]), resolve(cli));
+        assert.deepEqual(invocation.args.slice(1), ['version']);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('installed local-marketplace launcher removes a Windows extended path prefix', () => {
+    if (process.platform !== 'win32') return;
+    const root = temporaryDirectory();
+    try {
+        const codexHome = join(root, '.codex');
+        const marketplaceRoot = join(root, 'longmemory-source');
+        const cli = join(marketplaceRoot, 'dist', 'cli', 'index.js');
+        const scriptPath = join(
+            codexHome, 'plugins', 'cache', 'longmemory', 'longmemory', '0.1.0',
+            'scripts', 'codex-memory-mcp.mjs',
+        );
+        mkdirSync(dirname(cli), { recursive: true });
+        mkdirSync(codexHome, { recursive: true });
+        writeFileSync(cli, '// local marketplace CLI\n', 'utf8');
+        writeFileSync(join(codexHome, 'config.toml'), [
+            '[marketplaces.longmemory]',
+            `source = '\\\\?\\${marketplaceRoot}'`,
+            '',
+        ].join('\n'), 'utf8');
+        const invocation = resolveLongMemoryInvocation({
+            ...process.env,
+            LONGMEMORY_CLI_COMMAND: '',
+            PNPM_HOME: '',
+            APPDATA: join(root, 'blocked-global-profile'),
+        }, ['version'], { scriptPath });
+        assert.equal(invocation.command, process.execPath);
+        assert.equal(resolve(invocation.args[0]), resolve(cli));
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
 });
 
 function temporaryDirectory() {
@@ -81,6 +169,7 @@ test('bundled MCP configuration uses the validated companion-file server map', (
     assert.equal(typeof value.mcpServers.longmemory, 'object');
     assert.equal(value.mcpServers.longmemory.command, 'node');
     assert.ok(Array.isArray(value.mcpServers.longmemory.args));
+    assert.equal(value.mcpServers.longmemory.startup_timeout_sec, 120);
 });
 
 test('real Hook PLUGIN_DATA and legacy MCP cache derivation resolve byte-identical paths', () => {

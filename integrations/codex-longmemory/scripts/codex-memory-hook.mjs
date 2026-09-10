@@ -28,11 +28,12 @@ let child = null;
 
 try {
     const input = await readBounded(process.stdin, MAX_HOOK_IO_BYTES);
+    const scriptPath = fileURLToPath(import.meta.url);
     const runtime = resolvePluginRuntime({
         env: process.env,
-        scriptPath: fileURLToPath(import.meta.url),
+        scriptPath,
     });
-    child = spawnLongMemory(['codex-hook'], { env: runtime.env });
+    child = spawnLongMemory(['codex-hook'], { env: runtime.env, scriptPath });
     child.stdin.on('error', () => { /* a failed CLI is handled through its exit result */ });
     child.stderr.pipe(process.stderr);
     child.stdin.end(input);

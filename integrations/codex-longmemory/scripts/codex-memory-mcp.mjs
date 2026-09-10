@@ -21,13 +21,15 @@ import {
 } from './plugin-runtime.mjs';
 
 try {
+    const scriptPath = fileURLToPath(import.meta.url);
     const runtime = resolvePluginRuntime({
         env: process.env,
-        scriptPath: fileURLToPath(import.meta.url),
+        scriptPath,
     });
     const child = spawnLongMemory(codexMemoryMcpArgs(), {
         env: runtime.env,
         stdio: 'inherit',
+        scriptPath,
     });
     const exit = await waitForChild(child);
     if (exit.error) throw exit.error;

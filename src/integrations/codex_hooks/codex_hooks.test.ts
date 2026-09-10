@@ -96,6 +96,8 @@ test('Codex capabilities are turn-scoped, stable within one turn, and invalidate
         const output = value.session_start();
         assert.match(additional_context(output), /尚未绑定/);
         assert.match(additional_context(output), /不得.*擅自猜测/);
+        assert.match(additional_context(output), /project_id 必须直接使用用户明确指定的项目标识/);
+        assert.doesNotMatch(additional_context(output), /建议 project_id=/);
         assert.match(additional_context(output), /longmemory_codex_memory/);
         assert.equal(value.state().bound, false);
         assert.doesNotMatch(additional_context(output), /capability=/,
@@ -139,6 +141,40 @@ test('Codex capabilities are turn-scoped, stable within one turn, and invalidate
         assert.equal(value.state().capability_turn_id, null);
         assert.throws(() => value.registry.require_capability(
             'thread-1', second_capability, 'turn-2'), /invalid Codex turn capability/);
+    } finally { value.close(); }
+});
+
+test('an unconfigured task rejects ambiguous current before binding and can bind the explicit project', () => {
+    const value = fixture();
+    try {
+        value.session_start();
+        const current = value.registry.activate_turn('thread-1', 'explicit-project-turn');
+        assert.throws(() => bind_codex_task(value.registry, current, {
+            session_id: current.session_id,
+            capability: current.capability,
+            turn_id: 'explicit-project-turn',
+            project_id: 'current',
+            project_name: 'Novel',
+            responsibility: 'Extract durable novel history.',
+        }), /project_id=current is ambiguous/);
+        assert.equal(value.state().bound, false);
+        with_service(value.state(), (service) => {
+            assert.equal(service.repository.get_thread('thread-1'), null);
+        });
+
+        const bound = bind_codex_task(value.registry, value.state(), {
+            session_id: current.session_id,
+            capability: current.capability,
+            turn_id: 'explicit-project-turn',
+            project_id: 'novel',
+            project_name: 'Novel',
+            responsibility: 'Extract durable novel history.',
+        });
+        assert.equal(bound.state.bound, true);
+        assert.equal(bound.state.project_id, 'novel');
+        with_service(bound.state, (service) => {
+            assert.equal(service.repository.require_thread('thread-1').project_id, 'novel');
+        });
     } finally { value.close(); }
 });
 
@@ -392,7 +428,10 @@ test('an explicitly configured project cannot be replaced during task binding', 
         value.options.project_name = 'Configured Project';
         value.options.project_was_configured = true;
         value.session_start();
-        assert.match(additional_context(value.session_start('resume')), /configured-project/);
+        const configured_context = additional_context(value.session_start('resume'));
+        assert.match(configured_context, /configured-project/);
+        assert.match(configured_context, /project_id 必须原样传入 "configured-project"/);
+        assert.doesNotMatch(configured_context, /建议 project_id=/);
         assert.throws(() => value.bind({
             project_id: 'other-project',
             project_name: 'Other Project',

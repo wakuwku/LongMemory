@@ -164,6 +164,12 @@ export function bind_codex_task(
     if (state.project_was_configured && !state.configured_project_id) {
         throw new Error('configured Codex project anchor is missing; restart the task before binding memory');
     }
+    if (!state.configured_project_id && project_id.toLowerCase() === 'current') {
+        throw new Error(
+            'project_id=current is ambiguous for an unconfigured Codex task; '
+            + 'use the project id explicitly selected by the user',
+        );
+    }
     if (state.configured_project_id && project_id !== state.configured_project_id) {
         throw new Error(
             `Codex task is configured for project ${state.configured_project_id}; `

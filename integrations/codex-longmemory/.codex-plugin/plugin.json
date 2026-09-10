@@ -1,6 +1,6 @@
 {
   "name": "longmemory",
-  "version": "0.1.0+codex.20260909190537",
+  "version": "0.1.0+codex.20260910213124",
   "description": "Durable project memory, recall, decisions, tasks, and governed context for Codex and ChatGPT.",
   "author": {
     "name": "CaviraOSS",

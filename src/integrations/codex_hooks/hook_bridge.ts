@@ -118,8 +118,14 @@ export function parse_codex_hook_event(input: string | unknown): codex_hook_even
 
 function setup_context(state: codex_hook_session_state, turn_id?: string): string {
     const project_instruction = state.project_was_configured
-        ? `项目已由本地配置绑定为“${state.project_id}”；仍需询问本任务的对话职责。`
-        : '先询问该任务属于哪个项目，以及这个对话具体负责什么；不得根据 cwd、标题或首条请求擅自猜测。';
+        ? [
+            `项目已由本地配置绑定为“${state.project_id}”；仍需询问本任务的对话职责。`,
+            `bind 时 project_id 必须原样传入 ${JSON.stringify(state.project_id)}，不得替换。`,
+        ].join('\n')
+        : [
+            '先询问该任务属于哪个项目，以及这个对话具体负责什么；不得根据 cwd、标题或首条请求擅自猜测。',
+            'bind 时 project_id 必须直接使用用户明确指定的项目标识；不得传入含糊的 "current"，也不得先绑定当前目录项目再尝试迁移。',
+        ].join('\n');
     const capability_contract = turn_id ? [
         '本次 UserPromptSubmit 已激活以下回合级凭证；bind 必须同时原样传入 capability 和 turn_id。该凭证只在本回合有效。',
         `capability=${JSON.stringify(state.capability)}`,
@@ -135,7 +141,6 @@ function setup_context(state: codex_hook_session_state, turn_id?: string): strin
         ...capability_contract,
         '工具返回的 delivery_id 只有实际看到后才能显式确认。',
         `session_id=${JSON.stringify(state.session_id)}`,
-        `建议 project_id=${JSON.stringify(state.project_id)}`,
         '绑定工具返回的【中央记忆（外部、可更新）】才可作为外部参考；当前用户指令与本任务现场始终更高。',
     ].join('\n');
 }

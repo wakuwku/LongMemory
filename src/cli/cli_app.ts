@@ -78,7 +78,9 @@ const commands = new Map<string, cli_command_loader>([
     ['history:plan', async () => (await import('./commands/porter/history_plan.js')).history_plan_command],
     ['history:govern', async () => (await import('./commands/porter/history_govern.js')).history_govern_command],
     ['history:confirm', async () => (await import('./commands/porter/history_govern.js')).history_confirm_command],
+    ['history:reclassify', async () => (await import('./commands/porter/history_govern.js')).history_reclassify_command],
     ['history:worker', async () => (await import('./commands/porter/history_worker.js')).history_worker_command],
+    ['history:background', async () => (await import('./commands/porter/history_background.js')).history_background_command],
     ['tui', async () => (await import('./commands/porter/tui.js')).tui_command],
 ]);
 
@@ -111,6 +113,7 @@ const help = {
         'history govern <action> <publication-id> --db <central.db> --project <id> --action-id <id> --confirm-human',
         'history confirm <approve|reject|cancel> <confirmation-id> --db <central.db> --project <id> --action-id <id> --confirm-human',
         'history worker <authorize|revoke|list> ... --db <central.db> --project <id>',
+        'history background <enable|checkpoint|work|revoke> --db <central.db> --project <id> (trusted local owner)',
         'tui',
     ],
 };

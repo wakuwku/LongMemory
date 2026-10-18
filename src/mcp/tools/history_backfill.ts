@@ -22,6 +22,7 @@ import {
 } from '../../core/central_memory/history_worker_authorization.js';
 import { count_tokens } from '../../core/recall/context_builder.js';
 import { CodexHookRegistry } from '../../integrations/codex_hooks/registry.js';
+import { assert_participating } from '../../integrations/codex_hooks/participation.js';
 import type { codex_hook_session_state } from '../../integrations/codex_hooks/types.js';
 import { SqliteStore } from '../../stores/sqlite/sqlite_store.js';
 import type { mcp_runtime } from '../runtime.js';
@@ -43,12 +44,13 @@ type history_action =
     | 'submit_reduce'
     | 'fail_reduce';
 
-type history_tool_input = {
+export type history_tool_input = {
     action: history_action;
     session_id: string;
     capability: string;
     turn_id: string;
     run_id?: string;
+    after_lease_id?: string;
     lease_id?: string;
     chunk_hash?: string;
     lease_ms?: number;
@@ -131,7 +133,7 @@ function receipt_dto(action: 'submit_extract' | 'submit_reduce', receipt: Return
     };
 }
 
-function run_history_action(
+export function run_history_action(
     service: HistoryBackfillService,
     worker: history_worker_context,
     project_id: string,
@@ -143,7 +145,7 @@ function run_history_action(
                 worker, project_id, require_field(input.run_id, 'run_id'),
             ));
         case 'claim_extract': {
-            const claim = service.claim_next(worker, input.lease_ms ?? default_lease_ms);
+            const claim = service.claim_next(worker, input.lease_ms ?? default_lease_ms, input);
             return {
                 action: input.action,
                 content_trust: 'untrusted_history_evidence',
@@ -176,7 +178,7 @@ function run_history_action(
             );
             return { action: input.action, failed: true };
         case 'claim_reduce': {
-            const claim = service.claim_consolidation(worker, input.lease_ms ?? default_lease_ms);
+            const claim = service.claim_consolidation(worker, input.lease_ms ?? default_lease_ms, input);
             return {
                 action: input.action,
                 content_trust: 'untrusted_history_evidence',
@@ -301,11 +303,14 @@ export function register_history_backfill_tool(server: mcp_server_sdk, runtime: 
                 input.session_id,
                 input.capability,
                 input.turn_id,
-                (state) => with_history_service(
+                (state) => {
+                    assert_participating(registry.root, state, input.turn_id);
+                    return with_history_service(
                     state,
                     (service, worker, project_id) => run_history_action(service, worker, project_id, input),
                     input.action === 'status' || input.action === 'reduction_page',
-                ),
+                    );
+                },
             );
         },
     ));

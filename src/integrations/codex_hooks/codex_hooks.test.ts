@@ -200,6 +200,38 @@ test('legacy registry state without capability_turn_id loads safely but cannot a
     } finally { value.close(); }
 });
 
+test('pilot scope suppresses bound unrelated tasks; task refusal survives resume and skip lasts one turn', () => {
+    const value = fixture();
+    try {
+        value.session_start();
+        value.bind();
+        const prompt = (text: string, turn: string) => handle_codex_hook({
+            session_id: 'thread-1', transcript_path: null, cwd: value.root,
+            hook_event_name: 'UserPromptSubmit', turn_id: turn, prompt: text,
+        }, value.options);
+        writeFileSync(join(value.plugin_data, 'participation.json'), JSON.stringify({
+            mode: 'allowlist', project_ids: ['unrelated'],
+        }));
+        assert.match(additional_context(prompt('继续工作', 'outside')), /中央记忆未启用/);
+        assert.equal(handle_codex_hook({ session_id: 'thread-1', cwd: value.root,
+            hook_event_name: 'Stop', turn_id: 'outside', stop_hook_active: false,
+        }, value.options).decision, undefined);
+        writeFileSync(join(value.plugin_data, 'participation.json'), JSON.stringify({
+            mode: 'allowlist', project_ids: ['novel'],
+        }));
+        assert.match(additional_context(prompt('本次跳过', 'skip')), /中央记忆未启用/);
+        assert.match(additional_context(value.session_start('compact')), /中央记忆未启用/);
+        assert.equal(handle_codex_hook({ session_id: 'thread-1', cwd: value.root,
+            hook_event_name: 'Stop', turn_id: 'skip', stop_hook_active: false,
+        }, value.options).decision, undefined);
+        assert.match(additional_context(prompt('继续', 'next')), /正式记忆提交契约/);
+        assert.match(additional_context(prompt('此任务不使用记忆', 'off')), /中央记忆未启用/);
+        assert.match(additional_context(value.session_start('resume')), /中央记忆未启用/);
+        assert.match(additional_context(prompt('继续', 'still-off')), /中央记忆未启用/);
+        assert.match(additional_context(prompt('启用记忆', 'on')), /正式记忆提交契约/);
+    } finally { value.close(); }
+});
+
 test('capability-scoped operations keep authorization and registry mutation in one lock scope', () => {
     const value = fixture();
     try {
@@ -671,8 +703,11 @@ test('visible delivery ids are acknowledged by record_turn while unconfirmed con
             hook_event_name: 'UserPromptSubmit', turn_id: 'related-turn',
             prompt: '请继续研究 anime painting 的 edge treatment 和轮廓。', permission_mode: 'default',
         }, value.options);
-        assert.match(additional_context(related), /Anime edge treatment/);
+        assert.doesNotMatch(additional_context(related), /Anime edge treatment/,
+            'acknowledged unchanged versions must not be re-injected even when recalled');
         assert.doesNotMatch(additional_context(related), /SQLite checkpoint/);
+        assert.equal(delivery_ids(additional_context(related)).length, 0);
+        assert.ok(count_tokens(additional_context(related)) < count_tokens(additional_context(prompt)));
         record_codex_turn(value.state(), {
             session_id: value.state().session_id,
             capability: value.state().capability,
@@ -807,6 +842,35 @@ test('UserPromptSubmit provides the write contract up front and Stop is only a f
             last_assistant_message: 'done', permission_mode: 'default',
         }, value.options);
         assert.deepEqual(stop, { continue: true });
+    } finally { value.close(); }
+});
+
+test('delta delivery sends a newer version and compact reloads consumed content', () => {
+    const value = fixture();
+    try {
+        value.session_start(); value.bind();
+        const seed = value.state();
+        record_codex_turn(seed, { session_id: seed.session_id, capability: seed.capability,
+            turn_id: 'delta-seed', memories: [{ memory_id: 'delta-memory', level: 4,
+                memory_kind: 'fact', title: 'Versioned novel result', summary: 'Initial result', body: 'Initial verified result.' }] });
+        const prompt = (turn_id: string) => handle_codex_hook({ session_id: 'thread-1',
+            transcript_path: null, cwd: value.root, hook_event_name: 'UserPromptSubmit',
+            turn_id, prompt: 'Versioned novel result', permission_mode: 'default' }, value.options);
+        const first = prompt('delta-first');
+        record_codex_turn(value.state(), { session_id: 'thread-1', capability: value.state().capability,
+            turn_id: 'delta-first', acknowledged_delivery_ids: delivery_ids(additional_context(first)), memories: [] });
+        assert.doesNotMatch(additional_context(prompt('delta-unchanged')), /Initial verified result/);
+        const compact = value.session_start('compact');
+        assert.match(additional_context(compact), /Initial verified result/);
+        record_codex_turn(value.state(), { session_id: 'thread-1', capability: value.state().capability,
+            turn_id: 'delta-update', acknowledged_delivery_ids: delivery_ids(additional_context(compact)),
+            memories: [{ memory_id: 'delta-memory', expected_current_version: 1, level: 4,
+                memory_kind: 'fact', title: 'Versioned novel result', summary: 'Updated result',
+                body: 'New verified result.', change_reason: 'New evidence.' }] });
+        const updated = prompt('delta-new');
+        assert.match(additional_context(updated), /New verified result/);
+        assert.match(additional_context(updated), /v2/);
+        assert.doesNotMatch(additional_context(updated), /Initial verified result/);
     } finally { value.close(); }
 });
 
@@ -1060,6 +1124,24 @@ test('the MCP gateway rejects cross-turn replay and preserves same-turn recall/f
             },
         });
         assert.notEqual(current.isError, true, JSON.stringify(current.content));
+        const refuse = await client.callTool({
+            name: 'longmemory_codex_memory', arguments: {
+                action: 'participation', participation: 'off', session_id: 'thread-1',
+                capability: value.state().capability, turn_id: 'gateway-next-turn',
+            },
+        });
+        assert.notEqual(refuse.isError, true, JSON.stringify(refuse.content));
+        assert.equal(value.state().memory_disabled, true);
+        const disabled_recall = await client.callTool({
+            name: 'longmemory_codex_memory', arguments: {
+                action: 'recall', query: 'story', session_id: 'thread-1',
+                capability: value.state().capability, turn_id: 'gateway-next-turn',
+            },
+        });
+        assert.equal(disabled_recall.isError, true);
+        assert.equal(handle_codex_hook({ session_id: 'thread-1', cwd: value.root,
+            hook_event_name: 'Stop', turn_id: 'gateway-next-turn', stop_hook_active: false,
+        }, value.options).decision, undefined);
     } finally {
         await client.close();
         await mcp.server.close();

@@ -67,6 +67,8 @@ const strip_synthetic_user_blocks = (value: string): string => {
     for (const name of synthetic_user_blocks) {
         result = result.replace(new RegExp(`<${regex_escape(name)}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${regex_escape(name)}>`, 'gi'), '');
     }
+    // Only the known leading harness wrapper, not quoted/discussed AGENTS text.
+    result = result.replace(/^\s*# AGENTS\.md instructions for [^\r\n]+\r?\n\s*<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>\s*/i, '');
     return result.trim();
 };
 

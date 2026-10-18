@@ -23,6 +23,7 @@ import {
 } from './central_memory_migration.js';
 import { central_project_links_migration_sql } from './central_project_links_migration.js';
 import { history_backfill_migration_sql } from './history_backfill_migration.js';
+import { history_batch_migration_sql } from './history_batch_migration.js';
 import { history_publication_hardening_migration_sql } from './history_publication_hardening_migration.js';
 import { history_publication_migration_sql } from './history_publication_migration.js';
 import { history_worker_authorization_migration_sql } from './history_worker_authorization_migration.js';
@@ -128,6 +129,7 @@ export function migrations(): Migration[] {
             name: 'governed_l4_project_links',
             sql: central_project_links_migration_sql,
         },
+        { version: 12, name: 'bounded_history_batch_leases', sql: history_batch_migration_sql },
     ];
 }
 

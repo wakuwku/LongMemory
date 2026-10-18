@@ -25,8 +25,67 @@ import type {
 } from './history_backfill_types.js';
 import { HistoryPublicationService } from './history_publication_service.js';
 import { HistoryWorkerAuthorizationService } from './history_worker_authorization.js';
+import { BackgroundHistoryWorker } from './background_history.js';
 
 const digest = (character: string): string => character.repeat(64);
+
+test('different quotations from one source part publish without immutable source collision',()=>{
+    const value=make_fixture();
+    try {
+        value.backfill.create_run({project_id:'project-a',session:{schema_version:'1.0.0',source_harness:'codex',source_session_id:'shared-part',
+            source_path:'C:/history/shared.jsonl',cwd:'D:/work',title:'Shared evidence',created_at:1,updated_at:2,
+            turns:[{role:'user',text:'Alpha is durable. Beta is durable.'}],dropped_turns:0,source_metadata:{}},
+            evidence:{inventory_id:'inventory:shared',reconciliation_digest:digest('a'),plan_id:'plan:shared',manifest_hash:digest('b'),
+                target_db_path:'D:/memory/central.db',target_project_id:'project-a'}});
+        const extract=value.worker('extract-shared'),claim=value.backfill.claim_next(extract,5000)!;
+        const findings=['Alpha','Beta'].map(word=>finding_for(claim,{title:word,body:word,summary:word,
+            evidence:[{chunk_index:0,turn_index:0,part_index:0,quote:word}]}));
+        value.backfill.submit_chunk(extract,claim.lease_id,claim.chunk.chunk_hash,findings);
+        const reduce=value.worker('reduce-shared'),reduction=value.backfill.claim_consolidation(reduce,5000)!;
+        value.backfill.complete_consolidation(reduce,reduction.lease_id,findings);
+        value.store.central_memory.register_role({role_id:'shared-role',project_id:'project-a',name:'Shared'});
+        value.store.central_memory.register_task({task_id:'shared-task',role_id:'shared-role',project_id:'project-a',title:'Shared'});
+        for(const pub of value.publication.list('project-a')) {
+            const worker=value.worker(pub.publication_id);
+            const proposal=value.publication.propose_hierarchy({publication_id:pub.publication_id,level:4,
+                role:{mode:'existing',role_id:'shared-role'},task:{mode:'existing',task_id:'shared-task'},confidence:1},worker);
+            const plan=value.publication.create_plan({publication_id:pub.publication_id,proposal_id:proposal.proposal_id,
+                memory_kind:'knowledge',semantic_key:pub.publication_id},worker);
+            const input={publication_id:pub.publication_id,plan_version:plan.plan_version,attempt_id:pub.publication_id};
+            const result=value.publication.execute(input,worker);
+            assert.equal(result.publication.status,'published');
+            assert.deepEqual(value.publication.execute(input,worker),result);
+        }
+    } finally {value.store.close();}
+});
+
+test('background publication remains plan-scoped, idempotent, and major rules await confirmation',()=>{
+    const value=make_fixture();
+    try {
+        const ordinary=seed_candidate(value,'background-ordinary');
+        const major=seed_candidate(value,'background-major',{kind:'requirement',is_major:true});
+        value.store.central_memory.register_role({role_id:'bg-role',project_id:'project-a',name:'History'});
+        value.store.central_memory.register_task({task_id:'bg-task',role_id:'bg-role',project_id:'project-a',title:'Historical knowledge'});
+        for (const [seed,name,is_major] of [[ordinary,'background-ordinary',false],[major,'background-major',true]] as const) {
+            const grant=new HistoryWorkerAuthorizationService(value.store.database,{tenant_id:'tenant',user_id:'user'}).authorize({
+                project_id:'project-a',worker_session_id:'worker-a',worker_id:'history-agent',plan_id:`plan:${name}`,
+                actor_id:'human',action_id:`enable:${name}`,evidence:{execution_mode:'local_background_v1'}});
+            const worker=new BackgroundHistoryWorker(value.store,'project-a',grant.authorization_id);
+            const call=(input:Record<string,unknown>)=>(worker.execute('publication',input) as {result:any}).result;
+            const list=call({action:'list'});
+            assert.deepEqual(list.items.map((row:{publication_id:string})=>row.publication_id),[seed.publication_id]);
+            assert.throws(()=>call({action:'get',publication_id:(is_major?ordinary:major).publication_id}),/outside/);
+            const proposal=call({action:'propose_hierarchy',publication_id:seed.publication_id,level:4,
+                role:{mode:'existing',role_id:'bg-role'},task:{mode:'existing',task_id:'bg-task'},confidence:1}).proposal;
+            const plan=call({action:'create_plan',publication_id:seed.publication_id,proposal_id:proposal.proposal_id,
+                memory_kind:is_major?'requirement':'knowledge',semantic_key:name}).plan;
+            const input={action:'execute',publication_id:seed.publication_id,plan_version:plan.plan_version};
+            const result=call(input);
+            assert.deepEqual(call(input),result);
+            assert.equal(result.publication.status,is_major?'pending_confirmation':'published');
+        }
+    } finally {value.store.close();}
+});
 
 type fixture = {
     store: SqliteStore;
@@ -188,6 +247,78 @@ const accept_new_hierarchy = (value: fixture, publication_id: string, suffix: st
     });
     return proposal;
 };
+
+test('history facts cannot be demoted to indexes; missing ownership stays unpublished and discovery is scoped', () => {
+    const value = make_fixture();
+    try {
+        const seeded = seed_candidate(value, 'classification-guard');
+        for (const level of [1, 2, 3] as const) assert.throws(() => value.publication.propose_hierarchy({
+            publication_id: seeded.publication_id, level,
+            role: { mode: 'none' }, task: { mode: 'none' }, confidence: 1,
+        }, value.worker('classify')), /History findings are L4/);
+        assert.equal(value.publication.get(seeded.publication_id).status, 'pending');
+        value.store.central_memory.register_role({project_id:'project-a',role_id:'role-a',name:'Publishing'});
+        value.store.central_memory.register_role({project_id:'project-b',role_id:'role-b',name:'Other'});
+        value.store.central_memory.register_task({project_id:'project-a',role_id:'role-a',task_id:'task-a',title:'Plan publication'});
+        assert.throws(() => value.publication.propose_hierarchy({publication_id:seeded.publication_id,
+            level:4,role:{mode:'existing',role_id:'role-a'},task:{mode:'none'},confidence:1},
+            value.worker('missing-task')), /require a role-bound task/);
+        assert.equal(value.publication.get(seeded.publication_id).status, 'pending');
+        const roles = value.publication.discover_hierarchy(value.worker('discover'),{kind:'roles',limit:1,offset:0});
+        assert.deepEqual(roles.items.map(r=>r.role_id),['role-a']);
+        assert.equal(roles.next_offset,null);
+        assert.deepEqual(value.publication.discover_hierarchy(value.worker('discover'),{
+            kind:'tasks',role_id:'role-a',limit:10,offset:0}).items.map(t=>t.task_id),['task-a']);
+        assert.throws(()=>value.publication.discover_hierarchy(value.worker('discover'),{
+            kind:'tasks',role_id:'role-b',limit:10,offset:0}),/outside/);
+    } finally { value.store.close(); }
+});
+
+test('governed legacy reclassification is atomic, scoped, traceable and idempotent', () => {
+    const value = make_fixture();
+    try {
+        const seeded = seed_candidate(value, 'legacy-classification');
+        value.store.central_memory.register_role({project_id:'project-a',role_id:'role-a',name:'Publishing'});
+        // Reproduce a pre-fix persisted L2 publication, not a supported new write path.
+        const legacy = value.publication as unknown as {assert_content_level: (...args: unknown[])=>void};
+        const guard = legacy.assert_content_level;
+        legacy.assert_content_level = () => {};
+        const proposal = value.publication.propose_hierarchy({publication_id:seeded.publication_id,
+            level:2,role:{mode:'existing',role_id:'role-a'},task:{mode:'none'},confidence:1},value.worker('legacy'));
+        const plan = value.publication.create_plan({publication_id:seeded.publication_id,proposal_id:proposal.proposal_id,
+            memory_kind:'knowledge',semantic_key:'early publication intent'},value.worker('legacy'));
+        const executed = value.publication.execute({publication_id:seeded.publication_id,plan_version:plan.plan_version,
+            attempt_id:'legacy-attempt'},value.worker('legacy'));
+        legacy.assert_content_level = guard;
+        const old_id = executed.publication.result_memory_id!;
+        const input = { publication_id:seeded.publication_id,project_id:'project-a',expected_version:1,
+            task_id:'publication-plan',task_title:'Publication planning',task_objective:'Research platforms and plan trial publication',
+            decision:{actor_id:'human',actor_kind:'user' as const,action_id:'correct-classification',
+                channel:'local_cli' as const,note:'Correct concrete facts from L2 to L4',evidence:{user_requested_correction:true}} };
+        assert.throws(()=>value.publication.correct_classification({...input,project_id:'project-b'}),/project mismatch/);
+        assert.throws(()=>value.publication.correct_classification({...input,expected_version:2}),/updates|version mismatch/);
+        value.store.database.exec(`CREATE TRIGGER fail_correction BEFORE INSERT ON cm_outbox
+            WHEN NEW.event_type='central_memory.classification_corrected'
+            BEGIN SELECT RAISE(ABORT,'correction rollback probe'); END;`);
+        assert.throws(()=>value.publication.correct_classification(input),/rollback probe/);
+        assert.equal(value.store.central_memory.require_memory(old_id).current_version,1);
+        assert.equal(value.store.central_memory.get_task(input.task_id),null);
+        value.store.database.exec('DROP TRIGGER fail_correction');
+        const corrected = value.publication.correct_classification(input);
+        assert.equal(value.store.central_memory.require_memory(old_id).current_version,null);
+        assert.equal(value.store.central_memory.require_version(old_id,1).status,'retracted');
+        assert.equal(value.store.central_memory.require_memory(corrected.memory_id).level,4);
+        assert.equal(value.store.central_memory.require_version(corrected.memory_id,1).body,seeded.finding.body);
+        assert.deepEqual(value.publication.correct_classification(input),corrected);
+        assert.throws(()=>value.publication.correct_classification({...input,task_id:'different'}),/different content/);
+        const links=(id:string)=>value.store.database.prepare(`SELECT source_id,evidence_role,locator_json
+            FROM cm_memory_version_sources WHERE memory_id=? ORDER BY source_id`).all(id);
+        assert.deepEqual(links(old_id),links(corrected.memory_id));
+        assert.equal(value.publication.get(seeded.publication_id).result_memory_id,old_id,
+            'immutable original publication receipt must remain truthful');
+        assert.deepEqual(value.store.check_integrity().issues, []);
+    } finally { value.store.close(); }
+});
 
 test('new roles and tasks wait for human governance, then a final candidate publishes with server-derived evidence', () => {
     const value = make_fixture();
@@ -489,7 +620,7 @@ test('publication failure rolls back formal memory but keeps an idempotent retry
 
 test('publication workers are project-scoped and their own role/task is never inherited', () => {
     const value = make_fixture();
-    const seeded = seed_candidate(value, 'history-scope');
+    const seeded = seed_candidate(value, 'history-scope', { kind: 'requirement', is_major: true });
     assert.throws(() => value.publication.propose_hierarchy({
         publication_id: seeded.publication_id,
         level: 1,

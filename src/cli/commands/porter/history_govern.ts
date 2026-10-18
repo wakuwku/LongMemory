@@ -248,6 +248,32 @@ export const history_govern_command: cli_command = async (context) => {
     }
 };
 
+export const history_reclassify_command: cli_command = async (context) => {
+    command_flags(context, ['action-id', 'note', 'confirm-human', 'expected-version', 'task-id', 'task-title', 'task-objective']);
+    const publication_id = require_value(positional(context, 0), '<publication-id>');
+    if (context.args.positionals.length !== 1) throw new Error('history reclassify accepts one publication id');
+    const input = preflight(context);
+    const expected_version = positive_integer(flag(context, 'expected-version'), '--expected-version');
+    if (expected_version === null) throw new Error('--expected-version is required');
+    const task_id = require_value(flag(context, 'task-id'), '--task-id');
+    const store = open_store(context, input);
+    try {
+        require_publication_project(store, publication_id, input.project_id);
+        const history = new HistoryPublicationService(store.database, {
+            tenant_id: input.tenant_id, user_id: input.user_id,
+            capability_guard: () => { throw new Error('classification approver is not a history worker'); },
+        });
+        const result = history.correct_classification({ publication_id, project_id: input.project_id,
+            expected_version, task_id, task_title: flag(context, 'task-title'),
+            task_objective: flag(context, 'task-objective'),
+            decision: { actor_id: input.actor_id, actor_kind: 'user', action_id: input.action_id,
+                channel: 'local_cli', note: input.note,
+                evidence: { source: 'history_reclassify_cli', confirmed_human: true, note: input.note } },
+        });
+        emit(context, { ok: true, command: 'history reclassify', ...result }, () => `Reclassified to L4: ${result.memory_id}`);
+    } finally { store.close(); }
+};
+
 export const history_confirm_command: cli_command = async (context) => {
     command_flags(context, ['action-id', 'note', 'confirm-human']);
     const raw_action = require_value(positional(context, 0), '<approve|reject|cancel>');

@@ -7,7 +7,7 @@
 #
 #  cavira oss (c) 2026  -  nullure (c) 2026
 #  ----------------------------------------------------------
-#  file  : heroku.yml
+#  file  : deployments/heroku/heroku.yml
 #  usage : supports LongMemory heroku
 
 build:

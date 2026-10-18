@@ -809,6 +809,12 @@ function build_projection(snapshot: central_memory_snapshot, projection_root: st
     for (const project of snapshot.projects) {
         const project_id = string_value(project, 'project_id');
         const name = string_value(project, 'name');
+        const metadata = json_value(project, 'metadata_json') as Record<string, unknown>;
+        const parent_id = typeof metadata.parent_project_id === 'string' ? metadata.parent_project_id : null;
+        const child_links = snapshot.projects.filter((row) => {
+            const child_metadata = json_value(row, 'metadata_json') as Record<string, unknown>;
+            return child_metadata.parent_project_id === project_id;
+        }).map((row) => project_link(string_value(row, 'project_id')));
         const role_links = (roles_by_project.get(project_id) ?? []).map((row) => role_link(string_value(row, 'role_id')));
         const task_links = (tasks_by_project.get(project_id) ?? []).map((row) => task_link(string_value(row, 'task_id')));
         const thread_links = (threads_by_project.get(project_id) ?? []).map(thread_link);
@@ -835,6 +841,13 @@ function build_projection(snapshot: central_memory_snapshot, projection_root: st
                 `- 说明：${string_value(project, 'description')
                     ? inline_code(string_value(project, 'description')) : '_未填写_'}`,
                 ...timestamp_lines(project, ['created_at', 'updated_at']),
+                '',
+                '## 项目目录',
+                '',
+                ...(parent_id && projects.has(parent_id) ? [`- 上级：${project_link(parent_id)}`] : []),
+                ...links_or_empty(child_links),
+                '',
+                '目录关系仅用于组织；不会授予跨项目记忆读取权限。',
                 '',
                 '## 角色',
                 '',

@@ -31,6 +31,7 @@ import {
 } from '../../core/central_memory/history_worker_authorization.js';
 import { count_tokens } from '../../core/recall/context_builder.js';
 import { CodexHookRegistry } from '../../integrations/codex_hooks/registry.js';
+import { assert_participating } from '../../integrations/codex_hooks/participation.js';
 import type { codex_hook_session_state } from '../../integrations/codex_hooks/types.js';
 import { SqliteStore } from '../../stores/sqlite/sqlite_store.js';
 import type { mcp_runtime } from '../runtime.js';
@@ -46,6 +47,7 @@ const default_list_limit = 10;
 const maximum_governance_evidence_bytes = 16_384;
 
 type publication_action =
+    | 'hierarchy'
     | 'get'
     | 'list'
     | 'propose_hierarchy'
@@ -53,7 +55,9 @@ type publication_action =
     | 'execute'
     | 'reconcile_confirmation';
 
-type publication_tool_input = {
+export type publication_tool_input = {
+    hierarchy_kind?: 'roles' | 'tasks';
+    role_id?: string;
     action: publication_action;
     session_id: string;
     capability: string;
@@ -260,13 +264,25 @@ function list_publications(
     return envelope();
 }
 
-function run_publication_action(
+export function run_publication_action(
     service: HistoryPublicationService,
     worker: history_worker_context,
     project_id: string,
     input: publication_tool_input,
 ): unknown {
     switch (input.action) {
+        case 'hierarchy': {
+            let limit = Math.min(input.limit ?? 10, 20);
+            while (true) {
+                const page = service.discover_hierarchy(worker, {
+                    kind: input.hierarchy_kind ?? 'roles', role_id: input.role_id,
+                    limit, offset: input.offset ?? 0,
+                });
+                const result = { action: input.action, project_id, ...page };
+                if (count_tokens(JSON.stringify(result)) <= history_output_token_budget || limit === 1) return result;
+                limit--;
+            }
+        }
         case 'get': {
             const publication_id = required(input.publication_id, 'publication_id');
             return {
@@ -296,10 +312,17 @@ function run_publication_action(
             return { action: input.action, plan: plan_dto(plan) };
         }
         case 'execute': {
+            const publication_id = required(input.publication_id, 'publication_id');
+            const plan_version = required(input.plan_version, 'plan_version');
+            // Stable within this authenticated turn: transport retries reuse one attempt.
+            const attempt_id = input.attempt_id ?? `history-attempt:${sha256(JSON.stringify([
+                publication_id, plan_version, worker.worker_id, worker.worker_session_id,
+                worker.worker_turn_id, worker.capability_epoch_hash,
+            ]))}`;
             const result = service.execute({
-                publication_id: required(input.publication_id, 'publication_id'),
-                plan_version: required(input.plan_version, 'plan_version'),
-                attempt_id: required(input.attempt_id, 'attempt_id'),
+                publication_id,
+                plan_version,
+                attempt_id,
             }, worker);
             return {
                 action: input.action,
@@ -361,7 +384,7 @@ function with_publication_service(
             capability_guard(worker);
             return bounded_output(run_publication_action(service, worker, state.project_id, input));
         };
-        return input.action === 'get' || input.action === 'list'
+        return input.action === 'get' || input.action === 'list' || input.action === 'hierarchy'
             ? store.database.transaction(execute)()
             : execute();
     } finally {
@@ -419,7 +442,10 @@ export function register_history_publication_tool(server: mcp_server_sdk, runtim
                 input.session_id,
                 input.capability,
                 input.turn_id,
-                (state) => with_publication_service(state, input),
+                (state) => {
+                    assert_participating(registry.root, state, input.turn_id);
+                    return with_publication_service(state, input);
+                },
             );
         },
     ));

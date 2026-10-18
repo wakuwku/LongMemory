@@ -14,6 +14,7 @@
 
 import type { McpServer as mcp_server_sdk } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CodexHookRegistry } from '../../integrations/codex_hooks/registry.js';
+import { participation_allowed } from '../../integrations/codex_hooks/participation.js';
 import {
     bind_codex_task,
     recall_codex_memory,
@@ -51,6 +52,18 @@ export function register_codex_memory_tool(server: mcp_server_sdk, runtime: mcp_
             input.capability,
             input.turn_id,
             (state, save_state) => {
+                if (input.action === 'participation') {
+                    if (!input.participation) throw new Error('participation must be skip or off');
+                    save_state({ ...state,
+                        memory_disabled: input.participation === 'off' ? true : state.memory_disabled,
+                        memory_skipped_turn: input.turn_id,
+                    });
+                    return { enabled: false, scope: input.participation === 'off' ? 'task' : 'turn' };
+                }
+                if (!participation_allowed(registry.root, state) || state.memory_disabled
+                    || state.memory_skipped_turn === input.turn_id) {
+                    throw new Error('Central memory is disabled for this task or turn; continue the user request without memory.');
+                }
                 if (input.action === 'bind') {
                     if (!input.project_id || !input.responsibility) {
                         throw new Error('project_id and responsibility are required for Codex task binding');

@@ -60,6 +60,7 @@ export const history_backfill_schema = {
     capability: z.string().trim().min(32).max(256),
     turn_id: bounded_id,
     run_id: bounded_id.optional(),
+    after_lease_id: bounded_id.optional().describe('Continue after the successfully submitted lease from this same turn; omit for the first claim.'),
     lease_id: z.string().trim().min(1).max(256).optional(),
     chunk_hash: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
     lease_ms: z.number().int().min(1_000).max(60 * 60 * 1_000).optional(),

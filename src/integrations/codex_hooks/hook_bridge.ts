@@ -16,6 +16,7 @@ import { hash_canonical } from '../../core/hash/content_hash.js';
 import { count_tokens } from '../../core/recall/context_builder.js';
 import type { CentralMemoryService } from '../../core/central_memory/service.js';
 import { CodexHookRegistry } from './registry.js';
+import { participation_allowed, participation_command } from './participation.js';
 import {
     build_codex_context,
     reconcile_registry_binding,
@@ -136,7 +137,7 @@ function setup_context(state: codex_hook_session_state, turn_id?: string): strin
     return [
         '【中央记忆设置（尚未绑定）】',
         project_instruction,
-        '在开展实质工作前，先向用户询问并得到明确回答。不要把普通业务请求自动当成职责定义。',
+        '记忆绑定可选，不得阻止当前业务。可选择绑定、本次跳过、此任务不使用记忆；用户拒绝时直接继续业务，不得反复询问。不要把普通业务请求自动当成职责定义。',
         '得到明确回答后，调用 MCP 工具 longmemory_codex_memory，action=bind；传入下列可信会话字段，并把用户原话压缩为 responsibility。可选 role/task 只能来自用户明确说明。',
         ...capability_contract,
         '工具返回的 delivery_id 只有实际看到后才能显式确认。',
@@ -170,6 +171,7 @@ function turn_memory_contract(state: codex_hook_session_state, turn_id: string):
         '把本回合上下文与工具结果中实际看到的所有【中央记忆投递凭证】delivery_id 原样放入 acknowledged_delivery_ids；没有看到就传 []，绝不能猜测。',
         '只保存：完成事项、可迁移知识、已验证的问题与方案、确定结论、长期要求；排除临时报错、进展询问、普通解释和试错噪音。复现条件要准确完整。',
         '更新已有记忆必须带 exact expected_current_version；矛盾用 conflict_with。一级、重大规则、锁定或冲突结论只进入 pending_confirmation，不得伪造批准。',
+        '这是内部收尾：成功无需另发“记忆检查完成”，不要重复业务回复；仅报告需用户处理的失败或待决事项。',
     ].join('\n');
 }
 
@@ -183,17 +185,9 @@ function append_with_budget(parts: string[], token_budget: number): string {
 
 function formal_memory_prompt(state: codex_hook_session_state, turn_id: string): string {
     return [
-        '在结束本回合前，完成一次中央正式记忆检查。必须调用 MCP 工具 longmemory_codex_memory，action=record_turn，',
-        `session_id=${JSON.stringify(state.session_id)}，capability=${JSON.stringify(state.capability)}，turn_id=${JSON.stringify(turn_id)}。`,
-        '只提取已经完成且经过本回合证据验证的：完成事项概括、可复用知识、问题与解决方案、确定结论、长期要求。',
-        '不要保存临时服务器/网络报错、进展询问、普通概念解释、试错噪音、凭据、隐藏推理或原始长对话。',
-        '正文必须准确完整到未来读取时能直接回答“做了什么、为什么”；复现条件必须包含精确参数、模型/软件版本、seed、步数、依赖以及为何这样确定，同时保持压缩。',
-        '若没有正式记忆，传 memories=[]，仍要调用该工具完成幂等 finalize。',
-        '把实际看到的所有【中央记忆投递凭证】delivery_id 原样放入 acknowledged_delivery_ids；没有看到则传 []，不得猜测或确认隐藏字段。',
-        '先查当前中央版本；扩展已有记忆必须复用同一 memory_id 并提供 exact expected_current_version（CAS），不得盲目覆盖。矛盾用 conflict_with 上报。',
-        '重大规则、一级记忆、锁定请求或冲突结论必须标记 major=true（冲突类型会被工具强制治理），只进入 pending_confirmation；不得伪造用户批准。每回合允许 0..N 条。',
-        '完成工具调用后再结束回复。不要为了记忆检查重复执行本回合工作。',
-    ].join(' ');
+        '【中央记忆补交】本回合未成功收尾；使用下列当前凭证补交，不重做业务。',
+        turn_memory_contract(state, turn_id),
+    ].join('\n');
 }
 
 function save_checkpoint(
@@ -271,6 +265,26 @@ export function handle_codex_hook(
             ? registry.start_or_resume(event as codex_hook_event, options)
             : registry.load(event.session_id!)
                 ?? registry.start_or_resume(event as codex_hook_event, options);
+        const choice = event.hook_event_name === 'UserPromptSubmit'
+            ? participation_command(event.prompt ?? '') : null;
+        if (event.hook_event_name === 'UserPromptSubmit' && state.memory_skipped_turn
+            && state.memory_skipped_turn !== event.turn_id) {
+            state = { ...state, memory_skipped_turn: null };
+            registry.save(state);
+        }
+        if (choice) {
+            state = { ...state,
+                memory_disabled: choice === 'off' ? true : choice === 'on' ? false : state.memory_disabled,
+                memory_skipped_turn: choice === 'skip' ? event.turn_id! : null,
+            };
+            registry.save(state);
+        }
+        if (!participation_allowed(options.plugin_data, state) || state.memory_disabled
+            || state.memory_skipped_turn) {
+            return event.hook_event_name === 'UserPromptSubmit' || event.hook_event_name === 'SessionStart'
+                ? context_output(event.hook_event_name, '【中央记忆未启用】仅停用自动聊天记忆：不要求绑定，不自动召回，不调用 record_turn，不进行 Stop 补交。此开关不撤销用户另行明确授权的历史导入、提取、归并、发布或维护任务；这些业务仍按其独立授权、项目范围和治理规则执行。未获独立授权时不得自行开展历史操作。忽略旧上下文中将此开关解释为禁止所有中央记忆业务的提示。用户可明确要求调整本地记忆设置。')
+                : safe_output();
+        }
         state = reconcile_registry_binding(registry, state);
         if (event.hook_event_name === 'UserPromptSubmit') {
             state = registry.activate_turn(state.session_id, event.turn_id!);
@@ -304,7 +318,7 @@ export function handle_codex_hook(
             const recalled = with_codex_central(state, ({ service }) => recall(service, state, event.prompt!));
             const context = memory_budget >= 256
                 ? build_codex_context(state, {
-                    event_name: 'UserPromptSubmit', token_budget: memory_budget, include_consumed: true,
+                    event_name: 'UserPromptSubmit', token_budget: memory_budget, include_consumed: false,
                     turn_id: event.turn_id,
                     recalled_memory_ids: recalled,
                 })

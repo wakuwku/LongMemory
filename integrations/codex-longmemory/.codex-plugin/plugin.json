@@ -1,14 +1,14 @@
 {
   "name": "longmemory",
-  "version": "0.1.0+codex.20260910213124",
+  "version": "0.1.1",
   "description": "Durable project memory, recall, decisions, tasks, and governed context for Codex and ChatGPT.",
   "author": {
     "name": "CaviraOSS",
     "email": "CaviraOSS@users.noreply.github.com",
     "url": "https://github.com/CaviraOSS"
   },
-  "homepage": "https://github.com/CaviraOSS/LongMemory",
-  "repository": "https://github.com/CaviraOSS/LongMemory",
+  "homepage": "https://github.com/wakuwku/LongMemory",
+  "repository": "https://github.com/wakuwku/LongMemory",
   "license": "Apache-2.0",
   "keywords": [
     "memory",
@@ -16,19 +16,18 @@
     "coding-agent"
   ],
   "skills": "./skills/",
-  "hooks": "./hooks.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "LongMemory",
     "shortDescription": "Durable memory for Codex agents",
-    "longDescription": "Recall project context and persist decisions, task state, and validated outcomes through LongMemory.",
+    "longDescription": "Lightweight governed MCP tools with an optional startup consent adapter. Automatic turn capture is not enabled by this plugin.",
     "developerName": "CaviraOSS",
     "category": "Developer Tools",
     "capabilities": [
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/CaviraOSS/LongMemory",
+    "websiteURL": "https://github.com/wakuwku/LongMemory",
     "brandColor": "#0284C7",
     "defaultPrompt": [
       "Use LongMemory to load context for this task.",

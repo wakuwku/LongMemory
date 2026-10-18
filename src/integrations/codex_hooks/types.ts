@@ -77,6 +77,8 @@ export type codex_hook_session_state = {
     cwd: string;
     transcript_path: string | null;
     bound: boolean;
+    memory_disabled?: boolean;
+    memory_skipped_turn?: string | null;
     responsibility: string;
     role_id: string | null;
     task_id: string | null;

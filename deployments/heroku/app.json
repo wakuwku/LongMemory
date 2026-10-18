@@ -1,7 +1,7 @@
 {
     "name": "LongMemory",
     "description": "Self-hosted durable memory and MCP server for AI agents",
-    "repository": "https://github.com/CaviraOSS/LongMemory",
+    "repository": "https://github.com/wakuwku/LongMemory",
     "stack": "container",
     "env": {
         "LONGMEMORY_API_KEY": {

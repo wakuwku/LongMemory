@@ -13,7 +13,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -140,6 +140,7 @@ for (const path of repository_files()) {
         || path === 'integrations/n8n-nodes-longmemory/eslint.config.mjs'
         || path === 'dashboard/next-env.d.ts') continue;
     const absolute = resolve(root, path);
+    if (!existsSync(absolute)) continue;
     const content = readFileSync(absolute, 'utf8');
     const prefix = content.slice(0, 2_048);
     const header_count = prefix.match(/cavira oss \(c\) 2026/g)?.length ?? 0;

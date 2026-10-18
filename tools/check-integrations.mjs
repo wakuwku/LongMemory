@@ -38,7 +38,8 @@ for (const path of [
     'integrations/codex-longmemory/README.md',
     'integrations/codex-longmemory/.codex-plugin/plugin.json',
     'integrations/codex-longmemory/.mcp.json',
-    'integrations/codex-longmemory/hooks.json',
+    'integrations/codex-longmemory/hooks/hooks.json',
+    'integrations/codex-longmemory/scripts/document-memory-startup.mjs',
     'integrations/codex-longmemory/scripts/codex-memory-hook.mjs',
     'integrations/codex-longmemory/scripts/codex-memory-mcp.mjs',
     'integrations/codex-longmemory/scripts/plugin-runtime.mjs',
@@ -55,7 +56,7 @@ if (plugin) {
     if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(String(plugin.version ?? ''))) {
         failures.push('Codex plugin version must be valid semantic versioning');
     }
-    for (const key of ['skills', 'hooks', 'mcpServers']) {
+    for (const key of ['skills', 'mcpServers']) {
         const value = plugin[key];
         if (typeof value !== 'string' || !value.startsWith('./') || !existsSync(resolve(plugin_root, value))) {
             failures.push(`Codex plugin ${key} path is missing or invalid`);
@@ -72,9 +73,23 @@ if (!server || server.command !== 'node' || !Array.isArray(server.args) || serve
     if (!launcher.startsWith(plugin_root) || !existsSync(launcher)) failures.push('Codex plugin MCP launcher is outside or missing from the plugin');
 }
 
-const hooks = parse('integrations/codex-longmemory/hooks.json');
-for (const event of ['SessionStart', 'UserPromptSubmit', 'PreCompact', 'PostCompact', 'Stop']) {
-    if (!Array.isArray(hooks?.hooks?.[event]) || hooks.hooks[event].length < 1) failures.push(`Codex hook event is missing: ${event}`);
+const hooks = parse('integrations/codex-longmemory/hooks/hooks.json');
+if (JSON.stringify(Object.keys(hooks?.hooks ?? {})) !== JSON.stringify(['SessionStart'])) {
+    failures.push('Codex plugin must register only the optional SessionStart invitation');
+}
+const startup = hooks?.hooks?.SessionStart;
+if (!Array.isArray(startup) || startup.length !== 1 || startup[0]?.matcher !== 'startup'
+    || !Array.isArray(startup[0]?.hooks) || startup[0].hooks.length !== 1) {
+    failures.push('Codex plugin must register exactly one startup-only command');
+} else {
+    const command = startup[0].hooks[0];
+    if (command.type !== 'command' || !command.command?.includes('document-memory-startup.mjs')
+        || !command.commandWindows?.includes('document-memory-startup.mjs')) {
+        failures.push('Codex startup hook must use the document-memory invitation launcher');
+    }
+}
+if (existsSync(resolve(plugin_root, 'hooks.json')) || plugin?.hooks !== undefined) {
+    failures.push('Codex plugin must use the single hooks/hooks.json entry, without a duplicate legacy registration');
 }
 
 const marketplace = parse('.agents/plugins/marketplace.json');

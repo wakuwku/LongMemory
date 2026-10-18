@@ -15,6 +15,7 @@
 
 import { basename, resolve } from 'node:path';
 import { create_memory, type long_memory } from '../core/create_memory.js';
+import { create_gateway_memory } from '../core/create_gateway_memory.js';
 import type { ConnectorRegistry } from '../core/connectors/connector_registry.js';
 import { project_memory } from '../core/project/project_memory.js';
 import { mcp_audit_log } from './security/audit.js';
@@ -99,7 +100,8 @@ export class mcp_runtime {
                 ? role_default_tools
                 : role_default_tools.filter((name) =>
                     !(central_thread_scoped_tool_names as readonly string[]).includes(name)));
-        this.memory = config.memory ?? create_memory({
+        const memory_factory = profile === 'codex-memory-gateway' ? create_gateway_memory : create_memory;
+        this.memory = config.memory ?? memory_factory({
             store: config.db_path ? 'sqlite' : 'memory',
             db_path: config.db_path,
             tenant_id: this.tenant_id,

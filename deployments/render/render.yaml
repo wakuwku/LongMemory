@@ -7,7 +7,7 @@
 #
 #  cavira oss (c) 2026  -  nullure (c) 2026
 #  ----------------------------------------------------------
-#  file  : render.yaml
+#  file  : deployments/render/render.yaml
 #  usage : supports LongMemory render
 
 services:

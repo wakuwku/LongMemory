@@ -417,10 +417,10 @@ function claim_chunk(chunk: history_backfill_chunk): history_chunk_claim['chunk'
     };
 }
 
-function bounded_worker_claim<T extends history_chunk_claim | history_consolidation_claim>(claim: T): T {
+function bounded_worker_claim<T extends history_chunk_claim | history_consolidation_claim>(claim: T, budget: number = max_worker_claim_tokens): T {
     const tokens = count_tokens(canonicalize(claim));
-    if (tokens > max_worker_claim_tokens) {
-        throw new Error(`history worker claim exceeds the ${max_worker_claim_tokens}-token transport budget`);
+    if (tokens > budget) {
+        throw new Error(`history worker claim exceeds the ${budget}-token transport budget`);
     }
     return claim;
 }
@@ -681,6 +681,8 @@ export type history_backfill_service_options = {
     tenant_id: string;
     user_id: string;
     now?: () => number;
+    /** Trusted local transport only; MCP keeps the default budget. */
+    claim_transport_tokens?: number;
     capability_guard: (worker: history_worker_context) => void;
 };
 
@@ -689,11 +691,14 @@ export class HistoryBackfillService {
     readonly user_id: string;
     private readonly now: () => number;
     private readonly capability_guard: (worker: history_worker_context) => void;
+    private readonly claim_transport_tokens: number;
 
     constructor(readonly database: Database.Database, options: history_backfill_service_options) {
         this.tenant_id = bounded_string(options.tenant_id, 'tenant_id', 1, 1_024);
         this.user_id = bounded_string(options.user_id, 'user_id', 1, 1_024);
         this.now = options.now ?? (() => Date.now());
+        this.claim_transport_tokens = integer(options.claim_transport_tokens ?? max_worker_claim_tokens,
+            'claim_transport_tokens', max_worker_claim_tokens, 65_536);
         if (typeof options.capability_guard !== 'function') {
             throw new Error('HistoryBackfillService requires a synchronous capability_guard');
         }
@@ -865,7 +870,8 @@ export class HistoryBackfillService {
 
     private get_turn_usage(worker_session_id: string, worker_turn_id: string): history_turn_usage | null {
         const value = this.database.prepare(`SELECT * FROM cm_history_backfill_turn_usage
-            WHERE tenant_id=? AND user_id=? AND worker_session_id=? AND worker_turn_id=?`)
+            WHERE tenant_id=? AND user_id=? AND worker_session_id=? AND worker_turn_id=?
+            ORDER BY rowid DESC LIMIT 1`)
             .get(this.tenant_id, this.user_id, worker_session_id, worker_turn_id) as row | undefined;
         return value ? map_turn_usage(value) : null;
     }
@@ -876,6 +882,52 @@ export class HistoryBackfillService {
             || usage.worker_turn_id !== worker.worker_turn_id
             || usage.capability_epoch_hash !== worker.capability_epoch_hash) {
             throw new history_backfill_lease_error('history turn was claimed by a different capability epoch');
+        }
+    }
+
+    private batch_prior(worker: history_worker_context, after_lease_id?: string): history_turn_usage | null {
+        const prior = this.get_turn_usage(worker.worker_session_id, worker.worker_turn_id);
+        if (!after_lease_id) return prior;
+        if (!prior) throw new history_backfill_lease_error('batch predecessor does not exist in this turn');
+        this.assert_usage_identity(prior, worker);
+        this.require_active_worker(worker, prior.run_id);
+        if (prior.lease_id !== after_lease_id) {
+            const successor = this.database.prepare(`SELECT previous_lease_id FROM cm_history_backfill_turn_usage
+                WHERE tenant_id=? AND user_id=? AND lease_id=?`)
+                .get(this.tenant_id, this.user_id, prior.lease_id) as { previous_lease_id: string | null };
+            if (successor.previous_lease_id === after_lease_id) return prior;
+            throw new history_backfill_lease_error('stale or foreign batch predecessor');
+        }
+        const receipt = this.database.prepare(`SELECT 1 FROM cm_history_backfill_receipts
+            WHERE tenant_id=? AND user_id=? AND lease_id=?`)
+            .get(this.tenant_id, this.user_id, prior.lease_id);
+        if (prior.status !== 'consumed' || !receipt) {
+            throw new history_backfill_lease_error('batch predecessor must be successfully submitted before continuing');
+        }
+        return null;
+    }
+
+    private assert_batch_budget(worker: history_worker_context): void {
+        const usages = this.database.prepare(`SELECT * FROM cm_history_backfill_turn_usage
+            WHERE tenant_id=? AND user_id=? AND worker_session_id=? AND worker_turn_id=?`)
+            .all(this.tenant_id, this.user_id, worker.worker_session_id, worker.worker_turn_id) as row[];
+        if (usages.length <= 1) return; // preserve legacy large single-unit reductions
+        let tokens = 0;
+        for (const usage of usages) {
+            if (usage.operation_kind === 'chunk') {
+                tokens += this.require_chunk(String(usage.run_id), Number(usage.chunk_index)).token_count;
+            } else {
+                const reduction = this.require_reduction(String(usage.reduction_id));
+                for (const id of reduction.input_candidate_ids) {
+                    const candidate = this.database.prepare(`SELECT finding_json FROM cm_history_backfill_candidates
+                        WHERE tenant_id=? AND user_id=? AND candidate_id=?`)
+                        .get(this.tenant_id, this.user_id, id) as { finding_json: string };
+                    tokens += count_tokens(candidate.finding_json);
+                }
+            }
+        }
+        if (usages.length > 16 || tokens > 24_000) {
+            throw new history_backfill_lease_error('history batch budget reached (16 units / 24000 input tokens); use a new turn');
         }
     }
 
@@ -896,15 +948,17 @@ export class HistoryBackfillService {
         lease_id: string,
         lease_expires_at: number,
         at: number,
+        previous_lease_id: string | null = null,
     ): void {
         this.database.prepare(`INSERT INTO cm_history_backfill_turn_usage (
             tenant_id, user_id, worker_session_id, worker_turn_id, project_id,
             worker_id, capability_epoch_hash, operation_kind, run_id, chunk_index,
-            reduction_id, lease_id, lease_expires_at, status, claimed_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
+            reduction_id, lease_id, lease_expires_at, status, claimed_at, updated_at, previous_lease_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`)
             .run(this.tenant_id, this.user_id, worker.worker_session_id, worker.worker_turn_id,
                 project_id, worker.worker_id, worker.capability_epoch_hash, operation_kind,
-                run_id, chunk_index, reduction_id, lease_id, lease_expires_at, at, at);
+                run_id, chunk_index, reduction_id, lease_id, lease_expires_at, at, at, previous_lease_id);
+        this.assert_batch_budget(worker);
     }
 
     private consume_turn_usage(lease_id: string, worker: history_worker_context, at: number): void {
@@ -1158,7 +1212,8 @@ export class HistoryBackfillService {
         });
     }
 
-    claim_next(worker_context: history_worker_context, lease_ms: number): history_chunk_claim | null {
+    claim_next(worker_context: history_worker_context, lease_ms: number,
+        options: { after_lease_id?: string; run_id?: string } = {}): history_chunk_claim | null {
         const worker = normalize_worker_context(worker_context);
         const duration = integer(
             lease_ms, 'lease_ms', history_backfill_limits.min_lease_ms, history_backfill_limits.max_lease_ms,
@@ -1166,8 +1221,12 @@ export class HistoryBackfillService {
         const at = integer(this.now(), 'history backfill timestamp', 0, Number.MAX_SAFE_INTEGER);
         return this.write(() => {
             const { project_id } = this.require_active_worker(worker);
-            const prior_usage = this.get_turn_usage(worker.worker_session_id, worker.worker_turn_id);
+            if (options.run_id) this.require_active_worker(worker, options.run_id);
+            const prior_usage = this.batch_prior(worker, options.after_lease_id);
             if (prior_usage) {
+                if (options.run_id && prior_usage.run_id !== options.run_id) {
+                    throw new history_backfill_lease_error('active batch lease belongs to another run');
+                }
                 this.assert_usage_identity(prior_usage, worker);
                 this.require_active_worker(worker, prior_usage.run_id);
                 if (prior_usage.status !== 'active') {
@@ -1188,7 +1247,7 @@ export class HistoryBackfillService {
                     ...worker,
                     leased_at: prior_usage.claimed_at,
                     lease_expires_at: prior_usage.lease_expires_at,
-                });
+                }, this.claim_transport_tokens);
             }
             const targets = this.database.prepare(`SELECT chunk.run_id, chunk.chunk_index, chunk.lease_id
                 FROM cm_history_backfill_chunks AS chunk
@@ -1216,7 +1275,7 @@ export class HistoryBackfillService {
                     worker.worker_session_id, worker.worker_id, at, at) as Array<{
                     run_id: string; chunk_index: number; lease_id: string | null;
                 }>;
-            const target = targets.find((candidate) => has_active_history_worker_authorization(
+            const target = targets.find((candidate) => (!options.run_id || candidate.run_id === options.run_id) && has_active_history_worker_authorization(
                 this.database,
                 {
                     tenant_id: this.tenant_id,
@@ -1245,7 +1304,7 @@ export class HistoryBackfillService {
                 WHERE tenant_id=? AND user_id=? AND run_id=? AND status='pending'`)
                 .run(at, this.tenant_id, this.user_id, target.run_id);
             this.insert_turn_usage(worker, project_id, 'chunk', target.run_id,
-                target.chunk_index, null, lease_id, expires_at, at);
+                target.chunk_index, null, lease_id, expires_at, at, options.after_lease_id ?? null);
             return bounded_worker_claim({
                 run: claim_run(this.require_run(target.run_id)),
                 chunk: claim_chunk(this.require_chunk(target.run_id, target.chunk_index)),
@@ -1253,7 +1312,7 @@ export class HistoryBackfillService {
                 ...worker,
                 leased_at: at,
                 lease_expires_at: expires_at,
-            });
+            }, this.claim_transport_tokens);
         });
     }
 
@@ -1466,6 +1525,7 @@ export class HistoryBackfillService {
     claim_consolidation(
         worker_context: history_worker_context,
         lease_ms: number,
+        options: { after_lease_id?: string; run_id?: string } = {},
     ): history_consolidation_claim | null {
         const worker = normalize_worker_context(worker_context);
         const duration = integer(
@@ -1474,8 +1534,12 @@ export class HistoryBackfillService {
         const at = integer(this.now(), 'history backfill timestamp', 0, Number.MAX_SAFE_INTEGER);
         return this.write(() => {
             const { project_id } = this.require_active_worker(worker);
-            const prior_usage = this.get_turn_usage(worker.worker_session_id, worker.worker_turn_id);
+            if (options.run_id) this.require_active_worker(worker, options.run_id);
+            const prior_usage = this.batch_prior(worker, options.after_lease_id);
             if (prior_usage) {
+                if (options.run_id && prior_usage.run_id !== options.run_id) {
+                    throw new history_backfill_lease_error('active batch lease belongs to another run');
+                }
                 this.assert_usage_identity(prior_usage, worker);
                 this.require_active_worker(worker, prior_usage.run_id);
                 if (prior_usage.status !== 'active') {
@@ -1505,7 +1569,7 @@ export class HistoryBackfillService {
                     leased_at: prior_usage.claimed_at,
                     lease_expires_at: prior_usage.lease_expires_at,
                     chunk_candidate_count: count,
-                });
+                }, this.claim_transport_tokens);
             }
             const targets = this.database.prepare(`SELECT run.run_id, run.consolidation_lease_id
                 FROM cm_history_backfill_runs AS run
@@ -1531,7 +1595,7 @@ export class HistoryBackfillService {
                     worker.worker_session_id, worker.worker_id, at, at) as Array<{
                     run_id: string; consolidation_lease_id: string | null;
                 }>;
-            const target = targets.find((candidate) => has_active_history_worker_authorization(
+            const target = targets.find((candidate) => (!options.run_id || candidate.run_id === options.run_id) && has_active_history_worker_authorization(
                 this.database,
                 {
                     tenant_id: this.tenant_id,
@@ -1574,7 +1638,7 @@ export class HistoryBackfillService {
                     worker.worker_turn_id, worker.capability_epoch_hash, at, expires_at, at,
                     this.tenant_id, this.user_id, target.run_id);
             this.insert_turn_usage(worker, project_id, 'consolidation', target.run_id,
-                null, reduction.reduction_id, lease_id, expires_at, at);
+                null, reduction.reduction_id, lease_id, expires_at, at, options.after_lease_id ?? null);
             const count = Number((this.database.prepare(`SELECT count(*) AS count
                 FROM cm_history_backfill_candidates
                 WHERE tenant_id=? AND user_id=? AND run_id=? AND stage='chunk'`)
@@ -1591,7 +1655,7 @@ export class HistoryBackfillService {
                 leased_at: at,
                 lease_expires_at: expires_at,
                 chunk_candidate_count: count,
-            });
+            }, this.claim_transport_tokens);
         });
     }
 

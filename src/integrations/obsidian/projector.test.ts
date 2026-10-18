@@ -334,7 +334,7 @@ function populate_history_governance(store: SqliteStore) {
         confidence: 0.82,
     }, worker('hierarchy-review:proposal'));
 
-    const central_confirmation = seed('history-central-confirmation', { is_major: true });
+    const central_confirmation = seed('history-central-confirmation', { kind: 'requirement', is_major: true });
     const central_proposal = publication.propose_hierarchy({
         publication_id: central_confirmation.publication_id,
         level: 1,

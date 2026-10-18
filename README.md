@@ -20,37 +20,39 @@ LongMemory keeps durable project knowledge in SQLite and gives each task only
 the context it needs. Separate Codex tasks can stay focused while sharing
 approved facts, decisions, lessons, and constraints.
 
-- Four-level memory: project, role, task, and formal memory
-- Bounded recall instead of loading the entire history
-- Automatic capture with confirmation for major rules and conflicts
-- Safe Codex history import with redaction and audit trails
-- Governed L4-only links between otherwise isolated projects
-- Read-only Obsidian projection for browsing and management
-- Library, CLI, HTTP, MCP, dashboard, and VS Code surfaces
+- Bounded recall with explicit project ownership and source evidence
+- Lightweight Codex SQL gateway with on-demand loading of the full graph engine
+- Reviewed history import, resumable batches and revocable background workers
+- Optional startup invitation; task participation can be declined
+- Confirmation for major rules and conflicts, plus version-aware updates
+- Local CLI, MCP, HTTP, dashboard and read-only Obsidian projection
+
+This is the [wakuwku fork](https://github.com/wakuwku/LongMemory) of
+[CaviraOSS/LongMemory](https://github.com/CaviraOSS/LongMemory).
+See the [October update](CHANGELOG.md#fork-update---2026-10-18) for the runtime
+and repository cleanup changes.
 
 ## Architecture
 
 ```mermaid
-graph TB
-  INPUT[Events, documents, sessions] --> INGEST[Immutable ingest pipeline]
-  INGEST --> GRAPH[(Hydrograph)]
-  GRAPH --> STRICT[Strict and historical recall]
-  GRAPH --> ASSOC[Associative recall]
-  GRAPH --> GROUND[World-grounded recall]
-  GRAPH --> PROJECT[Project memory and governed assets]
-  GRAPH --> SQLITE[(SQLite)]
-  STRICT --> CONTEXT[Explainable bounded context]
-  ASSOC --> CONTEXT
-  GROUND --> CONTEXT
-  PROJECT --> MCP[MCP tools, resources, prompts]
-  CONTEXT --> API[Library, CLI, HTTP]
-  MCP --> AGENTS[Agents, IDEs, automation]
-  API --> UI[Dashboard and VS Code]
+graph LR
+  CODEX[Codex tasks] --> GATEWAY[Lightweight MCP gateway]
+  GATEWAY --> CENTRAL[Governed central memory]
+  CENTRAL --> DB[(Local SQLite)]
+  CLI[CLI and reviewed history workers] --> CENTRAL
+  API[Library and general HTTP or MCP] --> GRAPH[Hydrograph engine]
+  GRAPH --> DB
+  DB --> VIEW[Read-only Obsidian projection]
 ```
 
-SQLite is the source of truth. Per-task working sets are derived, bounded, and
-refreshed at safe turn boundaries; Obsidian is a projection, not a second
-memory store.
+For the shipped central-memory engine, SQLite is the source of truth and task
+working sets are bounded, versioned views. The default Codex plugin registers
+only an optional startup invitation; automatic per-turn capture and compaction
+injection are not enabled.
+
+The separate document-first pilot starts from project files and folders, uses
+flexible branches, and retrieves relevant documents on request. Its local panel,
+private project registry and knowledge files are not included in this repository.
 
 ## Quick start
 
@@ -87,8 +89,9 @@ const memory = await createMemory({
     user_id: 'alice',
 });
 
-await memory.ingest({ text: 'Use SQLite for local persistence' });
+await memory.ingest({ user_id: 'alice', text: 'Use SQLite for local persistence' });
 const result = await memory.recall({
+    user_id: 'alice',
     text: 'Which database should this project use?',
     mode: 'strict',
 });
@@ -97,7 +100,10 @@ console.log(result);
 await memory.close();
 ```
 
-## Codex central memory
+## Central memory model
+
+The structured SQLite engine retains these levels. They are separate from the
+flexible folder hierarchy of the document-first pilot.
 
 | Level | Scope | Typical content |
 | --- | --- | --- |
@@ -106,20 +112,18 @@ await memory.close();
 | L3 | Task | The current unit of work and its state |
 | L4 | Formal memory | Decisions, methods, lessons, constraints, and solutions |
 
-When a Codex task starts, it binds to a project and responsibility, receives a
-compact hierarchy map, and recalls only relevant L4 memory. Current user
-instructions always outrank recalled memory, and imported context stays
-labelled separately from the live conversation.
-
-At turn boundaries, useful outcomes can be written automatically. Major rules,
-conflicting conclusions, locked memories, and sensitive history transitions
-remain confirmation-gated.
+Authorized workflows bind an explicit project and responsibility, then recall
+relevant knowledge with its provenance. Current user instructions outrank
+recalled memory. Major rules, conflicts and sensitive history transitions
+remain confirmation-gated. Legacy automatic lifecycle code remains available
+for separately configured deployments, but is not registered by this plugin.
 
 ### Install the Codex integration
 
 After building and linking the CLI, add this repository as a Codex plugin
-marketplace, install the `longmemory` plugin, restart Codex, and review the
-bundled hook in `/hooks`.
+marketplace, install `longmemory`, restart Codex and review the startup hook.
+The invitation needs a machine-local adapter configuration; without it, the
+hook does nothing and ordinary work continues.
 
 See the [Codex integration guide](integrations/codex-longmemory/README.md) for
 the exact installation, storage, hook, MCP, update, and recovery workflow.
@@ -165,7 +169,7 @@ See [the CLI reference](docs/cli.md) and
 | CLI | Inspect, recall, import, govern, and maintain memory |
 | MCP | Give agents scoped memory tools |
 | HTTP API | Run LongMemory as a local or hosted service |
-| Codex plugin | Load bounded context and finalize turns automatically |
+| Codex plugin | Lightweight scoped MCP tools and an optional startup invitation |
 | Obsidian | Browse a deterministic read-only Markdown projection |
 | Dashboard | Search, inspect, chat, and manage memory |
 | VS Code | Recall and inspect project context in the editor |
@@ -181,10 +185,7 @@ OpenAI Agents SDK, and PydanticAI.
 | Docker | `Dockerfile` |
 | Docker Compose | `docker-compose.yml` |
 | Windows | `start-longmemory.ps1` |
-| Railway | `railway.json` |
-| Render | `render.yaml` |
-| Heroku | `app.json` |
-| Vercel dashboard | `vercel.json` |
+| Optional cloud hosting | [Templates and placement instructions](deployments/README.md) |
 
 For network deployment, configure `LONGMEMORY_API_KEY`, persistent storage,
 allowed origins, and TLS. Vercel hosts only the dashboard and requires a
@@ -197,7 +198,8 @@ pnpm release:check
 ```
 
 The release check covers public-file safety, unit tests, type checking,
-integrations, benchmarks, builds, and the dashboard.
+integrations, benchmarks, builds, and the dashboard. Root startup/build files
+remain in place; optional cloud templates are grouped under `deployments/`.
 
 ## Documentation
 

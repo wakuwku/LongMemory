@@ -375,6 +375,24 @@ test('removes synthetic user wrappers while retaining text outside the wrappers'
     assert.deepEqual(session.turns.map((turn) => turn.text), ['Keep this request']);
 });
 
+test('excludes leading AGENTS harness instructions but preserves user discussion and abort evidence', async (context) => {
+    const root = mkdtempSync(join(tmpdir(), 'longmemory-codex-agents-'));
+    context.after(() => rmSync(root, { recursive: true, force: true }));
+    const wrapper = '# AGENTS.md instructions for D:\\novel\n<INSTRUCTIONS>injected rule</INSTRUCTIONS>';
+    const discussion = 'Please explain this document:\n' + wrapper;
+    write_records(join(root, 'sessions', 'agents.jsonl'), [
+        { type: 'session_meta', payload: { id: 'agents-thread' } },
+        ...[wrapper, wrapper + '\nActual request', discussion, '<turn_aborted>'].map(text => ({
+            type: 'response_item', payload: { type: 'message', role: 'user',
+                content: [{ type: 'input_text', text }] },
+        })),
+    ]);
+    const ref = (await codex_adapter.discover({ CODEX_HOME: root }))[0];
+    assert.ok(ref);
+    const session = await codex_adapter.parse(ref);
+    assert.deepEqual(session.turns.map(turn => turn.text), ['Actual request', discussion, '<turn_aborted>']);
+});
+
 test('preserves response item agent messages as named tool turns', async (context) => {
     const root = mkdtempSync(join(tmpdir(), 'longmemory-codex-agent-message-'));
     context.after(() => rmSync(root, { recursive: true, force: true }));

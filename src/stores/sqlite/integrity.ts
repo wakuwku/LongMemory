@@ -1212,11 +1212,13 @@ export function check_sqlite_integrity(
     }
 
     const node_rows = db.prepare(`SELECT node_id, node_json, content_hash FROM hydro_nodes
-        WHERE tenant_id = ? AND user_id = ?`).all(scope.tenant_id, scope.user_id) as Array<{
+        WHERE tenant_id = ? AND user_id = ?`).iterate(scope.tenant_id, scope.user_id) as Iterable<{
         node_id: string; node_json: string; content_hash: string;
     }>;
+    let checked_nodes = 0;
     const node_ids = new Set<string>();
     for (const row of node_rows) {
+        checked_nodes++;
         if (decode_node_safely(row, row.node_id, issues)) node_ids.add(row.node_id);
     }
 
@@ -1417,7 +1419,7 @@ export function check_sqlite_integrity(
 
     return {
         ok: issues.length === 0,
-        checked_nodes: node_rows.length,
+        checked_nodes,
         checked_edges: edge_rows.length,
         checked_sketches: sketch_rows.length,
         checked_central_memories,

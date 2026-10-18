@@ -179,11 +179,13 @@ export class SqliteStore implements MemoryStore {
     load_nodes(): HydroNode[] {
         const rows = this.prepare(`SELECT node_id, node_json, content_hash FROM hydro_nodes
             WHERE tenant_id = ? AND user_id = ? ORDER BY recorded_at, node_id`)
-            .all(this.tenant_id, this.user_id) as NodeRow[];
-        return rows.flatMap((row) => {
+            .iterate(this.tenant_id, this.user_id) as Iterable<NodeRow>;
+        const nodes: HydroNode[] = [];
+        for (const row of rows) {
             const node = decode_node_safely(row, row.node_id, this.runtime_issues);
-            return node ? [node] : [];
-        });
+            if (node) nodes.push(node);
+        }
+        return nodes;
     }
 
     load_edges(): HydroEdge[] {

@@ -237,6 +237,7 @@ test('history MCP is capability locked, project isolated, replay safe, bounded, 
         ]);
         const history_tool = listed_tools.find((tool) => tool.name === 'longmemory_history_backfill')!;
         const input_properties = (history_tool.inputSchema.properties ?? {}) as json_object;
+        assert.ok('after_lease_id' in input_properties);
         for (const forbidden_identity of ['project_id', 'worker_id', 'source_session_id', 'source_revision']) {
             assert.equal(forbidden_identity in input_properties, false,
                 `${forbidden_identity} must be derived by the history gateway`);
@@ -440,10 +441,12 @@ test('history MCP is capability locked, project isolated, replay safe, bounded, 
         };
         json_result(await call(worker_a, 'submit_extract', prepare_submission));
 
-        worker_a = registry.activate_turn(worker_a.session_id, 'fail-reduce-turn');
-        const fail_reduce_claimed = json_result(await call(worker_a, 'claim_reduce', { lease_ms: 60_000 }));
+        const batch_arguments = { lease_ms: 60_000, after_lease_id: prepare_claim.lease_id, run_id: fail_reduce_run.run_id };
+        const fail_reduce_claimed = json_result(await call(worker_a, 'claim_reduce', batch_arguments));
         const fail_reduce_claim = fail_reduce_claimed.claim as json_object;
         assert.equal(fail_reduce_claim.run_id, fail_reduce_run.run_id);
+        const batch_retry = json_result(await call(worker_a, 'claim_reduce', batch_arguments));
+        assert.equal((batch_retry.claim as json_object).lease_id, fail_reduce_claim.lease_id);
         const failed_reduce = json_result(await call(worker_a, 'fail_reduce', {
             lease_id: fail_reduce_claim.lease_id,
             error: 'model consolidation failed and requires governance retry',

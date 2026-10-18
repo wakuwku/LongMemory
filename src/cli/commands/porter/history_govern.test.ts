@@ -175,6 +175,10 @@ function human_flags(action_id: string): string[] {
 test('trusted local project-link CLI keeps projects separate and governs L4 directions', async () => {
     const value = make_fixture();
     try {
+        const refused_correction = await invoke(value, ['history','reclassify','missing-publication',
+            '--expected-version','1','--task-id','a-task','--action-id','missing-human']);
+        assert.notEqual(refused_correction.code,0);
+        assert.match(refused_correction.output,/confirm-human/);
         const denied = await invoke(value, [
             'project', 'link', 'create', 'project-a', 'project-b', '--action-id', 'link-without-human',
         ]);
@@ -437,7 +441,7 @@ test('trusted local governance CLI completes hierarchy, update, conflict, retry 
 test('governance CLI requires explicit authority and enforces tenant/user/project and action-id scope', async () => {
     const value = make_fixture();
     try {
-        const publication_id = seed_candidate(value, 'security');
+        const publication_id = seed_candidate(value, 'security', { kind: 'requirement', is_major: true });
         const proposal = value.publication.propose_hierarchy({
             publication_id, level: 1,
             role: { mode: 'none' }, task: { mode: 'none' }, confidence: 0.9,

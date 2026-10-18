@@ -113,12 +113,12 @@ function seed_candidate(
     assert.equal(claim.run.run_id, run.run_id);
     const part = claim.chunk.source_parts[0]!;
     const finding = {
-        kind: 'knowledge' as const,
+        kind: suffix === 'a0' ? 'requirement' as const : 'knowledge' as const,
         title: `Verified history ${suffix}`,
         summary: `A concise durable result for ${suffix}.`,
         body: `The exact reusable conditions for ${suffix} were verified in the historical task.`,
         importance: 0.7,
-        is_major: false,
+        is_major: suffix === 'a0',
         evidence: [{
             chunk_index: claim.chunk.chunk_index,
             turn_index: part.turn_index,
@@ -272,6 +272,11 @@ test('history publication MCP separates capability workers from server-attribute
         assert.match(text_result(cross_project), /outside project|authorization scope/i);
 
         const list_result = await call_worker(worker_a, 'list', { limit: 5 });
+        const hierarchy_page = json_result(await call_worker(worker_a, 'hierarchy', { hierarchy_kind: 'roles', limit: 1 }));
+        assert.equal(hierarchy_page.project_id, 'project-a');
+        assert.ok((hierarchy_page.items as unknown[]).length <= 1);
+        const wrong_hierarchy = await call_worker(worker_a, 'hierarchy', {hierarchy_kind:'tasks',role_id:'missing-role'});
+        assert.equal(wrong_hierarchy.isError,true);
         const list_text = text_result(list_result);
         assert.ok(count_tokens(list_text) <= 1_800);
         assert.doesNotMatch(list_text, new RegExp(worker_a.capability));
@@ -317,12 +322,18 @@ test('history publication MCP separates capability workers from server-attribute
         const executed_result = await call_worker(worker_a, 'execute', {
             publication_id: project_a_publications[0],
             plan_version: plan.plan_version,
-            attempt_id: 'publication-attempt-level-one',
         });
         assert.ok(count_tokens(text_result(executed_result)) <= 1_800);
         const executed = json_result(executed_result);
         assert.equal((executed.publication as json_object).status, 'pending_confirmation');
         assert.equal((executed.attempt as json_object).outcome, 'pending_confirmation');
+        assert.match(String((executed.attempt as json_object).attempt_id), /^history-attempt:[a-f0-9]{64}$/);
+        const automatic_retry = json_result(await call_worker(worker_a, 'execute', {
+            publication_id: project_a_publications[0], plan_version: plan.plan_version,
+        }));
+        assert.equal((automatic_retry.attempt as json_object).attempt_id,
+            (executed.attempt as json_object).attempt_id);
+        assert.equal((automatic_retry.publication as json_object).attempt_count, 1);
         const reconciled_pending = json_result(await call_worker(worker_a, 'reconcile_confirmation', {
             publication_id: project_a_publications[0],
         }));

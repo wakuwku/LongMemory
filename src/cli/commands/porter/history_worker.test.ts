@@ -84,6 +84,35 @@ function worker(session_id: string, turn_id: string): history_worker_context {
     };
 }
 
+test('background manager registers once, preserves binding and checks explicit scope', async context=>{
+    const root=mkdtempSync(join(tmpdir(),'longmemory-background-cli-'));
+    context.after(()=>rmSync(root,{recursive:true,force:true}));
+    const db_path=join(root,'central.db');
+    const store=new SqliteStore(db_path,{tenant_id:'tenant',user_id:'human',startup_integrity_check:false});
+    try {
+        store.central_memory.register_project({project_id:'project-a',name:'A'});
+        store.central_memory.register_role({role_id:'extract-role',project_id:'project-a',name:'History extraction'});
+        const service=new HistoryBackfillService(store.database,{tenant_id:'tenant',user_id:'human',capability_guard:()=>undefined});
+        create_run(service,db_path,'background','plan:background',1);
+        const args=['history','background','enable','--session-id','new-worker','--plan-id','plan:background',
+            '--role-id','extract-role','--responsibility','Extract authorized history','--action-id','enable-background'];
+        assert.notEqual((await invoke(db_path,args)).code,0);
+        assert.equal(store.central_memory.get_thread('new-worker'),null);
+        const enabled=await invoke(db_path,[...args,'--confirm-human']);
+        assert.equal(enabled.code,0,enabled.output);
+        assert.deepEqual((await invoke(db_path,[...args,'--confirm-human'])).json,enabled.json);
+        const before=store.central_memory.require_thread('new-worker');
+        assert.equal((await invoke(db_path,[...args,'--confirm-human','--responsibility','Do not overwrite'])).code,0);
+        assert.deepEqual(store.central_memory.require_thread('new-worker'),before);
+        const grant=enabled.json!.result as {authorization_id:string};
+        const checkpoint=await invoke(db_path,['history','background','checkpoint','--authorization-id',grant.authorization_id]);
+        assert.equal(checkpoint.code,0,checkpoint.output);
+        assert.notEqual((await invoke(db_path,['history','background','enable','--session-id','bad-worker','--plan-id','plan:missing',
+            '--role-id','extract-role','--responsibility','test','--action-id','bad','--confirm-human'])).code,0);
+        assert.equal(store.central_memory.get_thread('bad-worker'),null);
+    } finally {store.close();}
+});
+
 test('CLI run scope excludes same-project work and revocation invalidates an existing lease', async (context) => {
     const root = mkdtempSync(join(tmpdir(), 'longmemory-history-worker-cli-'));
     context.after(() => rmSync(root, { recursive: true, force: true }));

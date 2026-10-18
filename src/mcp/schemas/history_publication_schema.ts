@@ -52,6 +52,7 @@ const history_task = z.discriminatedUnion('mode', [
  */
 export const history_publication_schema = {
     action: z.enum([
+        'hierarchy',
         'get',
         'list',
         'propose_hierarchy',
@@ -63,6 +64,8 @@ export const history_publication_schema = {
     capability: z.string().trim().min(32).max(256),
     turn_id: bounded_id,
     publication_id: bounded_id.optional(),
+    hierarchy_kind: z.enum(['roles', 'tasks']).optional(),
+    role_id: bounded_id.optional(),
     limit: z.number().int().min(1).max(50).optional(),
     offset: z.number().int().nonnegative().optional(),
     level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
@@ -73,7 +76,8 @@ export const history_publication_schema = {
     memory_kind: z.string().trim().min(1).max(256).optional(),
     semantic_key: bounded_key.optional(),
     plan_version: z.number().int().positive().optional(),
-    attempt_id: z.string().trim().min(1).max(512).optional(),
+    attempt_id: z.string().trim().min(1).max(512).optional()
+        .describe('Omit for a server-generated, turn-scoped idempotent attempt ID. Reuse a returned ID for an identical retry; do not invent one.'),
 };
 
 function meaningful_evidence(value: unknown): boolean {

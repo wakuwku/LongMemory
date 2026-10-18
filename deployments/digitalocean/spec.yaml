@@ -7,7 +7,7 @@
 #
 #  cavira oss (c) 2026  -  nullure (c) 2026
 #  ----------------------------------------------------------
-#  file  : .do/spec.yaml
+#  file  : deployments/digitalocean/spec.yaml
 #  usage : supports LongMemory spec
 
 name: longmemory
@@ -15,7 +15,7 @@ region: nyc
 services:
     - name: api
       github:
-          repo: CaviraOSS/LongMemory
+          repo: wakuwku/LongMemory
           branch: main
           deploy_on_push: true
       dockerfile_path: Dockerfile

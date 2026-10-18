@@ -15,7 +15,7 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /workspace
 RUN corepack enable
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json README.md LICENSE ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.build.json README.md LICENSE NOTICE ./
 COPY apps/vscode-extension/package.json apps/vscode-extension/package.json
 COPY integrations/n8n-nodes-longmemory/package.json integrations/n8n-nodes-longmemory/package.json
 RUN pnpm install --frozen-lockfile

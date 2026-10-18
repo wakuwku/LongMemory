@@ -29,6 +29,7 @@ import { canonicalize } from '../hash/canonical_json.js';
 import { count_tokens } from '../recall/context_builder.js';
 import { SqliteStore } from '../../stores/sqlite/sqlite_store.js';
 import { HistoryBackfillService } from './history_backfill_service.js';
+import { BackgroundHistoryWorker } from './background_history.js';
 import { HistoryWorkerAuthorizationService } from './history_worker_authorization.js';
 import type {
     history_backfill_finding,
@@ -39,6 +40,103 @@ import type {
 } from './history_backfill_types.js';
 
 const digest = (character: string): string => character.repeat(64);
+
+test('checkpoint continuation switches runs without resetting the durable root',()=>{
+    const value=fixture();
+    try {
+        const a=value.service.create_run({session:session('switch-a'),evidence:evidence(),project_id:'project-a'});
+        const b=value.service.create_run({session:session('switch-b'),evidence:evidence(),project_id:'project-a'});
+        const grant=new HistoryWorkerAuthorizationService(value.store.database,{tenant_id:'tenant',user_id:'user'}).authorize({
+            project_id:'project-a',worker_session_id:'worker-a',worker_id:'history-agent',plan_id:'plan:test',
+            actor_id:'human',action_id:'switch-runs',evidence:{execution_mode:'local_background_v1'}});
+        const worker=()=>new BackgroundHistoryWorker(value.store,'project-a',grant.authorization_id);
+        const input={action:'claim_extract',run_id:a.run_id};
+        const first=worker().execute('extract',input) as {result:{claim:{lease_id:string;chunk_hash:string}}};
+        assert.deepEqual(worker().checkpoint().next_claims,[input]);
+        worker().execute('extract',{action:'submit_extract',lease_id:first.result.claim.lease_id,
+            chunk_hash:first.result.claim.chunk_hash,findings:[]});
+        const next=worker().checkpoint().next_claims as Array<{run_id:string;after_lease_id:string}>;
+        const second_input=next.find(item=>item.run_id===b.run_id)!;
+        assert.equal(second_input.after_lease_id,first.result.claim.lease_id);
+        const second=worker().execute('extract',second_input) as {result:{claim:{run_id:string}}};
+        assert.equal(second.result.claim.run_id,b.run_id);
+        assert.deepEqual(worker().execute('extract',second_input),second);
+    } finally {value.store.close();}
+});
+
+test('local background transport handles frozen large chunks without widening default transport',()=>{
+    const value=fixture();
+    try {
+        const run=value.service.create_run({session:session('large-local',[{role:'user',text:'准确条件与知识。'.repeat(1100)}]),
+            evidence:evidence(),project_id:'project-a',max_chunk_chars:16000,max_chunk_tokens:6000});
+        assert.throws(()=>value.service.claim_next(value.worker('limited'),2000),/1800-token/);
+        const grant=new HistoryWorkerAuthorizationService(value.store.database,{tenant_id:'tenant',user_id:'user'}).authorize({
+            project_id:'project-a',worker_session_id:'worker-a',worker_id:'history-agent',run_id:run.run_id,
+            actor_id:'human',action_id:'large-local',evidence:{execution_mode:'local_background_v1'}});
+        const worker=new BackgroundHistoryWorker(value.store,'project-a',grant.authorization_id);
+        const result=worker.execute('extract',{action:'claim_extract',run_id:run.run_id}) as {result:{claim:{model_text:string}}};
+        assert.ok(result.result.claim.model_text.length>1800);
+    } finally {value.store.close();}
+});
+
+test('background jobs continue without Hook turns, reject injected credentials and respect revocation', () => {
+    const value=fixture();
+    try {
+        const run=value.service.create_run({session:session('background',[{role:'user',text:'Historical durable detail. '.repeat(240)}]),
+            evidence:evidence(),project_id:'project-a',max_chunk_chars:300,max_chunk_tokens:256});
+        const auth=new HistoryWorkerAuthorizationService(value.store.database,{tenant_id:'tenant',user_id:'user'});
+        const grant=auth.authorize({project_id:'project-a',worker_session_id:'worker-a',worker_id:'history-agent',
+            plan_id:'plan:test',actor_id:'human',action_id:'background-enable',evidence:{execution_mode:'local_background_v1'}});
+        const worker=()=>new BackgroundHistoryWorker(value.store,'project-a',grant.authorization_id);
+        assert.ok(run.chunk_count > 16, 'exercise continuation beyond the ordinary MCP batch cap');
+        assert.equal(worker().checkpoint().execution_contract.memory_service_units_per_chat_turn,null);
+        assert.equal(worker().checkpoint().execution_contract.requires_hook_capability,false);
+        assert.throws(()=>new BackgroundHistoryWorker(value.store,'project-b',grant.authorization_id).checkpoint(),/authorization/);
+        assert.throws(()=>worker().execute('extract',{action:'claim_extract',run_id:run.run_id,turn_id:'fake'}));
+        assert.throws(()=>worker().execute('publication',{action:'approve_update'}));
+        let prior:string|undefined;
+        for(let i=0;i<run.chunk_count;i++) {
+            const input={action:'claim_extract',run_id:run.run_id,after_lease_id:prior};
+            const result=worker().execute('extract',input) as {result:{claim:{lease_id:string;chunk_hash:string}}};
+            const claim=result.result.claim;
+            assert.deepEqual(worker().execute('extract',input),result);
+            assert.throws(()=>worker().execute('extract',{...input,after_lease_id:claim.lease_id}),/active/);
+            const submission={action:'submit_extract',lease_id:claim.lease_id,chunk_hash:claim.chunk_hash,findings:[]};
+            assert.deepEqual(worker().execute('extract',submission),worker().execute('extract',submission));
+            prior=claim.lease_id;
+        }
+        const reduction=worker().execute('extract',{action:'claim_reduce',run_id:run.run_id,after_lease_id:prior}) as {result:{claim:{lease_id:string}}};
+        assert.ok(reduction.result.claim);
+        worker().execute('extract',{action:'reduction_page',lease_id:reduction.result.claim.lease_id});
+        worker().execute('extract',{action:'submit_reduce',lease_id:reduction.result.claim.lease_id,findings:[]});
+        assert.equal(value.service.status('project-a',run.run_id).run.status,'candidates_ready');
+        auth.revoke({project_id:'project-a',authorization_id:grant.authorization_id,actor_id:'human',action_id:'revoke-background',evidence:{requested:true}});
+        assert.throws(()=>worker().checkpoint(),/authorization/);
+        assert.throws(()=>worker().execute('extract',{action:'submit_reduce',lease_id:reduction.result.claim.lease_id,findings:[]}),/authorization/);
+    } finally {value.store.close();}
+});
+
+test('background job can recover expired lease but cannot use ordinary grants or foreign runs',t=>{
+    const value=fixture();
+    try {
+        const run=value.service.create_run({session:session('recover'),evidence:evidence(),project_id:'project-a'});
+        const other=value.service.create_run({session:session('foreign'),evidence:{...evidence(),plan_id:'plan:other'},project_id:'project-a'});
+        const auth=new HistoryWorkerAuthorizationService(value.store.database,{tenant_id:'tenant',user_id:'user'});
+        const ordinary=auth.list('project-a')[0]!;
+        assert.throws(()=>new BackgroundHistoryWorker(value.store,'project-a',ordinary.authorization_id).checkpoint(),/authorization/);
+        const grant=auth.authorize({project_id:'project-a',worker_session_id:'worker-a',worker_id:'history-agent',run_id:run.run_id,
+            actor_id:'human',action_id:'recover-enable',evidence:{execution_mode:'local_background_v1'}});
+        const worker=new BackgroundHistoryWorker(value.store,'project-a',grant.authorization_id);
+        assert.throws(()=>worker.execute('extract',{action:'claim_extract',run_id:other.run_id}),/outside/);
+        const first=worker.execute('extract',{action:'claim_extract',run_id:run.run_id}) as {result:{claim:{lease_id:string}}};
+        const lease=first.result.claim.lease_id;
+        const later=Date.now()+3_600_000;
+        t.mock.method(Date,'now',()=>later);
+        const next=worker.execute('extract',{action:'claim_extract',run_id:run.run_id,after_lease_id:lease}) as {result:{claim:{lease_id:string}}};
+        assert.notEqual(next.result.claim.lease_id,lease);
+        assert.deepEqual(worker.execute('extract',{action:'claim_extract',run_id:run.run_id,after_lease_id:lease}),next);
+    } finally {value.store.close();}
+});
 
 const evidence = (project_id = 'project-a') => ({
     inventory_id: 'inventory:test',
@@ -154,6 +252,66 @@ const finding_for = (
         ...overrides,
     };
 };
+
+test('explicit batches preserve retries, turn identity, run selection and reduction handoff', () => {
+    const value = fixture();
+    try {
+        const a = value.service.create_run({session: session('batch-a'), evidence: evidence(), project_id: 'project-a'});
+        const b = value.service.create_run({session: session('batch-b'), evidence: evidence(), project_id: 'project-a'});
+        const worker = value.worker('batch');
+        const first = value.service.claim_next(worker, 2000, {run_id: b.run_id})!;
+        assert.equal(first.run.run_id, b.run_id);
+        assert.throws(() => value.service.claim_next(worker, 2000, {after_lease_id: first.lease_id}), /successfully submitted/);
+        const result = value.service.submit_chunk(worker, first.lease_id, first.chunk.chunk_hash, [finding_for(first)]);
+        assert.throws(() => value.service.claim_next(worker, 2000), /consumed/);
+        assert.throws(() => value.service.claim_next(value.worker('foreign'), 2000, {after_lease_id:first.lease_id}), /predecessor/);
+        assert.throws(() => value.service.claim_next(value.worker('batch', 'worker-a', 'd'), 2000, {after_lease_id:first.lease_id}), /epoch/);
+        const second = value.service.claim_next(worker, 2000, {after_lease_id:first.lease_id,run_id:a.run_id})!;
+        assert.equal(second.run.run_id, a.run_id);
+        assert.equal(value.service.claim_next(worker, 2000, {after_lease_id:first.lease_id,run_id:a.run_id})!.lease_id, second.lease_id);
+        assert.deepEqual(value.service.submit_chunk(worker, first.lease_id, first.chunk.chunk_hash, [finding_for(first)]), result);
+        value.service.submit_chunk(worker, second.lease_id, second.chunk.chunk_hash, []);
+        const reduce = value.service.claim_consolidation(worker, 2000, {after_lease_id:second.lease_id,run_id:b.run_id})!;
+        assert.equal(reduce.run.run_id, b.run_id);
+        assert.equal(value.service.claim_consolidation(worker, 2000, {after_lease_id:second.lease_id,run_id:b.run_id})!.lease_id, reduce.lease_id);
+        assert.throws(() => value.service.claim_next(worker, 2000, {after_lease_id:first.lease_id}), /stale/);
+        assert.ok(value.service.reduction_page(worker, reduce.lease_id, 0, 1400));
+        assert.throws(() => value.service.assert_turn_available_for_regular_memory('worker-a','batch',true), /history workflow/);
+        assert.equal(value.store.database.prepare('PRAGMA foreign_key_check').all().length, 0);
+    } finally { value.store.close(); }
+});
+
+test('batch budget rolls back the next lease and retains all previous audit rows', () => {
+    const value = fixture();
+    try {
+        const run = value.service.create_run({session:session('batch-budget',[{role:'user',text:'durable historical detail '.repeat(1200)}]),
+            evidence:evidence(),project_id:'project-a',max_chunk_chars:300,max_chunk_tokens:256});
+        assert.ok(run.chunk_count > 16);
+        const worker = value.worker('budget');
+        let previous: string | undefined;
+        for (let index=0; index<16; index++) {
+            const claim=value.service.claim_next(worker,2000,{after_lease_id:previous,run_id:run.run_id})!;
+            value.service.submit_chunk(worker,claim.lease_id,claim.chunk.chunk_hash,[]);
+            previous=claim.lease_id;
+        }
+        assert.throws(()=>value.service.claim_next(worker,2000,{after_lease_id:previous}),/budget/);
+        assert.equal(value.service.status('project-a',run.run_id).run.completed_chunks,16);
+        assert.equal((value.store.database.prepare("SELECT count(*) n FROM cm_history_backfill_turn_usage").get() as {n:number}).n,16);
+        assert.equal((value.store.database.prepare("SELECT count(*) n FROM cm_history_backfill_chunks WHERE status='leased'").get() as {n:number}).n,0);
+        assert.ok(value.service.claim_next(value.worker('next-budget-turn'),2000));
+    } finally {value.store.close();}
+});
+
+test('failed work cannot authorize continuation', () => {
+    const value=fixture();
+    try {
+        value.service.create_run({session:session('failed-batch'),evidence:evidence(),project_id:'project-a'});
+        const worker=value.worker('failed-batch');
+        const claim=value.service.claim_next(worker,2000)!;
+        value.service.fail_chunk(worker,claim.lease_id,claim.chunk.chunk_hash,'needs review');
+        assert.throws(()=>value.service.claim_next(worker,2000,{after_lease_id:claim.lease_id}),/successfully submitted/);
+    } finally {value.store.close();}
+});
 
 test('deterministic token-bounded chunks cover every turn and code point without loss', () => {
     const value = fixture();

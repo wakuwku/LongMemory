@@ -80,6 +80,11 @@ function assert_state(
     if (typeof value.bound !== 'boolean' || typeof value.project_was_configured !== 'boolean') {
         throw new Error('invalid Codex hook registry binding state');
     }
+    if ((value.memory_disabled !== undefined && typeof value.memory_disabled !== 'boolean')
+        || (value.memory_skipped_turn !== undefined && value.memory_skipped_turn !== null
+            && typeof value.memory_skipped_turn !== 'string')) {
+        throw new Error('invalid Codex hook memory participation state');
+    }
     if (value.capability_turn_id !== undefined && value.capability_turn_id !== null
         && typeof value.capability_turn_id !== 'string') {
         throw new Error('invalid Codex hook registry capability turn');

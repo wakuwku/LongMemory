@@ -43,7 +43,8 @@ const required = [
     '.agents/plugins/marketplace.json',
     'integrations/codex-longmemory/.codex-plugin/plugin.json',
     'integrations/codex-longmemory/.mcp.json',
-    'integrations/codex-longmemory/hooks.json',
+    'integrations/codex-longmemory/hooks/hooks.json',
+    'integrations/codex-longmemory/scripts/document-memory-startup.mjs',
     'integrations/codex-longmemory/scripts/codex-memory-hook.mjs',
     'integrations/codex-longmemory/scripts/codex-memory-mcp.mjs',
     'integrations/codex-longmemory/skills/longmemory/SKILL.md',
@@ -52,8 +53,8 @@ for (const path of required) if (!existsSync(resolve(root, path))) failures.push
 
 const files = repository_files();
 const tracked = repository_files(true);
-const forbidden_prefixes = ['artifacts/', 'KnowledgeVault/', '.longmemory/'];
-const forbidden_extensions = new Set(['.db', '.sqlite', '.sqlite3', '.tgz', '.vsix']);
+const forbidden_prefixes = ['artifacts/', 'KnowledgeVault/', '.longmemory/', 'backups/', 'history-rollout/'];
+const forbidden_extensions = new Set(['.db', '.sqlite', '.sqlite3', '.tgz', '.vsix', '.tsbuildinfo']);
 for (const path of tracked) {
     if (forbidden_prefixes.some((prefix) => path.startsWith(prefix))) {
         failures.push(`private or generated path is tracked: ${path}`);
@@ -83,7 +84,7 @@ const credential_patterns = [
 for (const path of files) {
     const absolute = resolve(root, path);
     if (!existsSync(absolute)) continue;
-    if (binary_extensions.has(extname(path).toLowerCase()) || statSync(absolute).size > 5_000_000) continue;
+    if (!statSync(absolute).isFile() || binary_extensions.has(extname(path).toLowerCase()) || statSync(absolute).size > 5_000_000) continue;
     const content = readFileSync(absolute, 'utf8');
     for (const [label, pattern] of private_patterns) {
         if (pattern.test(content)) failures.push(`${path} contains a ${label}`);

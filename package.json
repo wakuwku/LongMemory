@@ -4,13 +4,13 @@
     "description": "LongMemory Hydrograph TypeScript package: library, CLI, self-hosted API server, and benchmark harness.",
     "license": "Apache-2.0",
     "author": "CaviraOSS",
-    "homepage": "https://github.com/CaviraOSS/LongMemory#readme",
+    "homepage": "https://github.com/wakuwku/LongMemory#readme",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/CaviraOSS/LongMemory.git"
+        "url": "git+https://github.com/wakuwku/LongMemory.git"
     },
     "bugs": {
-        "url": "https://github.com/CaviraOSS/LongMemory/issues"
+        "url": "https://github.com/wakuwku/LongMemory/issues"
     },
     "keywords": [
         "ai",
@@ -39,7 +39,7 @@
     ],
     "scripts": {
         "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/stores/sqlite',{recursive:true});fs.copyFileSync('src/stores/sqlite/schema.sql','dist/stores/sqlite/schema.sql')\"",
-        "test:unit": "node --import tsx --test src/cli/context/central_storage.test.ts src/cli/commands/porter/history_govern.test.ts src/cli/commands/porter/history_worker.test.ts src/cli/porter/adapters/codex.test.ts src/cli/porter/history_plan.test.ts src/cli/porter/history_authorization.test.ts src/cli/porter/history_redaction.test.ts src/core/central_memory/central_memory.test.ts src/core/central_memory/history_backfill.test.ts src/core/central_memory/history_publication.test.ts src/integrations/codex_hooks/codex_hooks.test.ts src/integrations/obsidian/projector.test.ts src/mcp/central_memory_tools.test.ts src/mcp/history_backfill_tool.test.ts src/mcp/history_publication_tool.test.ts src/stores/sqlite/history_publication_hardening.test.ts src/stores/sqlite/integrity.test.ts integrations/codex-longmemory/scripts/plugin-runtime.test.mjs",
+        "test:unit": "node --import tsx --test --test-concurrency=1 src/cli/context/central_storage.test.ts src/cli/commands/porter/history_govern.test.ts src/cli/commands/porter/history_worker.test.ts src/cli/porter/adapters/codex.test.ts src/cli/porter/history_plan.test.ts src/cli/porter/history_authorization.test.ts src/cli/porter/history_redaction.test.ts src/core/create_gateway_memory.test.ts src/core/central_memory/central_memory.test.ts src/core/central_memory/history_backfill.test.ts src/core/central_memory/history_publication.test.ts src/integrations/codex_hooks/codex_hooks.test.ts src/integrations/obsidian/projector.test.ts src/mcp/transports/stdio.test.ts src/mcp/central_memory_tools.test.ts src/mcp/history_backfill_tool.test.ts src/mcp/history_publication_tool.test.ts src/stores/sqlite/history_publication_hardening.test.ts src/stores/sqlite/integrity.test.ts integrations/codex-longmemory/scripts/plugin-runtime.test.mjs integrations/codex-longmemory/scripts/codex-memory-mcp.test.mjs integrations/codex-longmemory/scripts/document-memory-startup.test.mjs",
         "start": "node dist/server/index.js",
         "dev": "node --import tsx src/cli/index.ts status",
         "bench": "tsx benchmarks/src/cli.ts run --providers=longmemory --datasets=smoke --no-resume",

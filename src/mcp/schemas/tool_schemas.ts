@@ -311,7 +311,8 @@ const codex_memory_candidate = z.object({
 });
 
 export const codex_memory_schema = {
-    action: z.enum(['bind', 'recall', 'record_turn']),
+    action: z.enum(['bind', 'recall', 'record_turn', 'participation']),
+    participation: z.enum(['skip', 'off']).optional(),
     session_id: z.string().trim().min(1).max(1_024),
     capability: z.string().trim().min(32).max(256),
     project_id: z.string().trim().min(1).max(1_024).optional(),

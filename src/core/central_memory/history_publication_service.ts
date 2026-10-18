@@ -17,7 +17,7 @@ import { hash_canonical, sha256_hex } from '../hash/content_hash.js';
 import { canonicalize } from '../hash/canonical_json.js';
 import { CentralMemoryRepository } from '../../stores/sqlite/central_memory_repository.js';
 import { CentralMemoryService } from './service.js';
-import { central_memory_conflict_error, type central_metadata } from './types.js';
+import { central_memory_conflict_error, type central_metadata, type central_confirmation_decision } from './types.js';
 import { assert_no_obvious_credentials } from './sensitive_content.js';
 import type { history_worker_context } from './history_backfill_types.js';
 import { has_active_history_worker_authorization } from './history_worker_authorization.js';
@@ -494,6 +494,112 @@ export class HistoryPublicationService {
         return scoped.slice(offset, offset + limit);
     }
 
+    /** Approver-only repair preserving immutable publication receipts and old versions. */
+    correct_classification(input: {
+        publication_id: string; project_id: string; expected_version: number;
+        task_id: string; task_title?: string; task_objective?: string;
+        decision: central_confirmation_decision;
+    }): { memory_id: string; old_memory_id: string; version: number } {
+        assert_no_obvious_credentials(input);
+        if (input.decision.actor_kind !== 'user' || !input.decision.action_id.trim()
+            || !input.decision.note?.trim() || !Object.keys(input.decision.evidence).length) {
+            throw new Error('classification correction requires an explicit human decision and reason');
+        }
+        const fingerprint = hash_canonical(input);
+        const event_id = `history-classification:${input.publication_id}`;
+        return this.write(() => {
+            const context = this.require_context(input.publication_id);
+            if (context.project_id !== input.project_id) throw new Error('classification correction project mismatch');
+            const prior = this.repository.get_outbox(event_id);
+            if (prior) {
+                if (prior.payload.fingerprint !== fingerprint) throw new Error('classification correction already exists with different content');
+                return prior.payload.result as { memory_id: string; old_memory_id: string; version: number };
+            }
+            const pub = context.publication;
+            if (pub.status !== 'published' || !pub.result_memory_id || !pub.current_plan_version) throw new Error('classification correction requires a published candidate');
+            const old = this.repository.require_memory(pub.result_memory_id);
+            if (pub.result_version !== input.expected_version) throw new Error('classification correction must review intervening published updates');
+            if (old.current_version !== input.expected_version) throw new Error('classification correction version mismatch');
+            const current = this.repository.require_version(old.memory_id, input.expected_version);
+            if (![2, 3].includes(old.level) || current.status !== 'active' || current.is_major
+                || this.repository.list_versions(old.memory_id).some(v => v.is_major)) {
+                throw new Error('only ordinary active L2/L3 content can be corrected by this operation');
+            }
+            const role = this.repository.require_role(old.role_id!);
+            if (role.status !== 'active' || role.project_id !== input.project_id) throw new Error('correction role is not active in project');
+            const at = this.now();
+            let task = this.repository.get_task(input.task_id);
+            if (!task) {
+                if (!input.task_title?.trim() || !input.task_objective?.trim()) throw new Error('missing correction task requires title and objective');
+                task = this.repository.register_task({ task_id: input.task_id, project_id: input.project_id,
+                    role_id: role.role_id, title: input.task_title, objective: input.task_objective, at });
+            }
+            if (task.project_id !== input.project_id || task.role_id !== role.role_id
+                || !['active','completed'].includes(task.status)) throw new Error('correction task must belong to the same active project and role');
+            const plan = this.require_plan(pub.publication_id, pub.current_plan_version);
+            const identity = { schema: 1, project_id: input.project_id, level: 4,
+                role_id: role.role_id, task_id: task.task_id, memory_kind: old.memory_kind,
+                semantic_key: plan.semantic_key_normalized };
+            const semantic_hash = hash_canonical(identity);
+            const memory_id = `cm-semantic:${semantic_hash.slice(0,40)}`;
+            if (this.repository.get_memory(memory_id)) throw new Error('correction target already exists; review before merging');
+            const result = this.central.publish({ memory_id, project_id: input.project_id,
+                level: 4, role_id: role.role_id, task_id: task.task_id, memory_kind: old.memory_kind,
+                title: current.title, summary: current.summary, body: current.body, importance: current.importance,
+                created_by: input.decision.actor_id, expected_current_version: null,
+                metadata: { ...current.metadata, reclassified_from: old.memory_id,
+                    reclassified_from_version: input.expected_version, classification_decision: input.decision },
+                change_reason: input.decision.note, sources: this.source_links(context), at });
+            if (!result.effective) throw new Error('classification correction must not bypass pending confirmation');
+            const sources = this.database.prepare(`SELECT source_id,evidence_role,locator_json
+                FROM cm_memory_version_sources WHERE tenant_id=? AND user_id=? AND memory_id=? AND version=?`)
+                .all(this.tenant_id, this.user_id, old.memory_id, input.expected_version) as row[];
+            for (const source of sources) this.repository.link_source(memory_id, result.version.version,
+                String(source.source_id), String(source.evidence_role), JSON.parse(String(source.locator_json)));
+            this.database.prepare(`INSERT INTO cm_semantic_memory_keys
+                (tenant_id,user_id,project_id,semantic_identity_hash,level,role_id,task_id,memory_kind,
+                 semantic_key_normalized,memory_id,is_canonical,created_at) VALUES (?,?,?,?,4,?,?,?,?,?,1,?)`)
+                .run(this.tenant_id,this.user_id,input.project_id,semantic_hash,role.role_id,task.task_id,
+                    old.memory_kind,plan.semantic_key_normalized,memory_id,at);
+            const retraction = this.central.request_retraction({ memory_id: old.memory_id,
+                expected_current_version: input.expected_version, requested_by: input.decision.actor_id,
+                reason: input.decision.note!, metadata: { replacement_memory_id: memory_id }, at });
+            this.central.approve(retraction.confirmation!.confirmation_id, input.decision, at);
+            const receipt = { memory_id, old_memory_id: old.memory_id, version: result.version.version };
+            this.repository.enqueue({ event_id, aggregate_kind: 'memory', aggregate_id: old.memory_id,
+                event_type: 'central_memory.classification_corrected',
+                payload: { fingerprint, result: receipt, decision: input.decision }, at });
+            return receipt;
+        });
+    }
+
+    discover_hierarchy(worker: history_worker_context, input: {
+        kind: 'roles' | 'tasks'; role_id?: string; limit: number; offset: number;
+    }): { items: row[]; next_offset: number | null } {
+        const { project_id } = this.require_active_worker(normalize_worker(worker));
+        const limit = Math.min(20, Math.max(1, integer(input.limit, 'limit', 1)));
+        const offset = integer(input.offset, 'offset', 0);
+        if (input.role_id) {
+            const role = this.repository.require_role(input.role_id);
+            if (role.project_id !== project_id || role.status !== 'active') throw new Error('hierarchy role is outside the active worker project');
+        }
+        const items = input.kind === 'roles'
+            ? this.database.prepare(`SELECT role_id,name,responsibility FROM cm_roles
+                WHERE tenant_id=? AND user_id=? AND project_id=? AND status='active'
+                ORDER BY role_id LIMIT ? OFFSET ?`).all(this.tenant_id, this.user_id, project_id, limit + 1, offset) as row[]
+            : this.database.prepare(`SELECT task_id,role_id,title,objective,status FROM cm_tasks
+                WHERE tenant_id=? AND user_id=? AND project_id=? AND status IN ('active','completed')
+                AND (? IS NULL OR role_id=?) ORDER BY task_id LIMIT ? OFFSET ?`)
+                .all(this.tenant_id, this.user_id, project_id, input.role_id ?? null, input.role_id ?? null, limit + 1, offset) as row[];
+        return { items: items.slice(0, limit), next_offset: items.length > limit ? offset + limit : null };
+    }
+
+    private assert_content_level(kind: string, major: boolean, level: number): void {
+        if (level === 4) return;
+        if (level === 1 && major && ['requirement', 'decision'].includes(kind)) return;
+        throw new Error('History findings are L4 content, not L2 role descriptions or L3 task indexes. Keep unclassified when a task is missing; discover or propose a task. Only major project requirements/decisions may use L1.');
+    }
+
     propose_hierarchy(
         raw_input: history_hierarchy_proposal_input,
         worker_context: history_worker_context,
@@ -516,6 +622,7 @@ export class HistoryPublicationService {
             if (worker_project !== context.project_id) {
                 throw new Error(`history publication ${publication_id} is outside the worker project`);
             }
+            this.assert_content_level(context.candidate.finding_kind, context.candidate.is_major, level);
             if (['published', 'discarded', 'superseded', 'pending_confirmation'].includes(context.publication.status)) {
                 throw new Error(`history publication ${publication_id} cannot accept hierarchy proposals in ${context.publication.status}`);
             }
@@ -887,6 +994,7 @@ export class HistoryPublicationService {
                 throw new Error(`history publication ${publication_id} cannot be planned in ${context.publication.status}`);
             }
             const proposal = this.require_proposal(proposal_id);
+            this.assert_content_level(context.candidate.finding_kind, context.candidate.is_major, proposal.proposed_level);
             if (proposal.publication_id !== publication_id
                 || proposal.run_id !== context.publication.run_id
                 || proposal.candidate_id !== context.candidate.candidate_id) {
@@ -1111,7 +1219,13 @@ export class HistoryPublicationService {
                 throw new Error('history evidence quote is not present in its immutable source part');
             }
             const source_identity = {
-                schema: 1,
+                schema: 2,
+                // Source observations include every varying immutable field.
+                // Preserve existing v1 records; never overwrite them on retry.
+                run_id: context.publication.run_id,
+                quote_hash: reference.quote === undefined ? null : sha256_hex(reference.quote),
+                excerpt_hash: sha256_hex(reference.quote ?? part.text),
+                recorded_at: context.candidate.created_at,
                 source_harness: context.source_harness,
                 source_session_id: context.source_session_id,
                 source_revision: context.source_revision,
@@ -1281,6 +1395,7 @@ export class HistoryPublicationService {
                 throw new history_publication_conflict_error('publication attempt does not target the current plan');
             }
             const plan = this.require_plan(publication_id, plan_version);
+            this.assert_content_level(context.candidate.finding_kind, context.candidate.is_major, plan.level);
             if (plan.project_id !== context.project_id
                 || plan.candidate_finding_hash !== context.candidate.finding_hash) {
                 throw new Error('publication plan no longer matches its immutable candidate scope');
